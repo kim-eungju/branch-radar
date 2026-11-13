@@ -27,7 +27,8 @@ public final class TestData {
                 new GitLabProperties.Gitlab(BASE_URL, "group/my project", "test-token",
                         Duration.ofSeconds(2), Duration.ofSeconds(2), maxPages),
                 new GitLabProperties.Flyway("db/migration", "V", "R", "__", List.of(".sql"), true,
-                        "build/tmp/flyway-files-test", false, "VADA"),
+                        "build/tmp/flyway-files-test", false, "VADA",
+                        List.of("jwsung", "ejkim", "jwhan", "chwonhan00")),
                 new GitLabProperties.Branch("develop", 2),
                 new GitLabProperties.Tag(true, GitLabProperties.TagSort.SEMVER, null, 50),
                 new GitLabProperties.StaleBranch(30, 60, "Asia/Seoul"));

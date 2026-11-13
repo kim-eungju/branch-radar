@@ -66,7 +66,7 @@ public class FlywayManageController {
         model.addAttribute("base", base);
         model.addAttribute("tokenConfigured", properties.gitlab().hasToken());
         model.addAttribute("migrationPath", properties.flyway().normalizedPath());
-        model.addAttribute("workers", FlywayCommitService.WORKERS);
+        model.addAttribute("workers", commitService.workers());
         model.addAttribute("localDir", store.root().toString());
         model.addAttribute("sync", localSync.last());
         model.addAttribute("draft", commitService.draft());

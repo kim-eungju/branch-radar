@@ -13,30 +13,68 @@ GitLab 프로젝트의 여러 브랜치를 한 화면에서 비교하는 사내 
 DB, 캐시 서버, 스케줄러를 쓰지 않습니다(로컬 폴더 `flyway-files`에 Flyway 파일과 임시저장만 둡니다). 화면을 열 때마다 GitLab REST API를 호출해 최신 정보를 가져옵니다.
 **쓰기 작업은 "새 Flyway 파일 1개를 추가하는 커밋"뿐입니다.** Flyway 실행, 기존 파일 수정·삭제, merge, cherry-pick, 브랜치 삭제는 하지 않습니다.
 
-## 요구 사항
+## 빠른 시작
 
-- Java 17
-- 별도 Gradle 설치 불필요 (`gradlew` 포함)
+1. **Java 17**을 설치합니다. (Gradle은 따로 설치하지 않아도 됩니다. `gradlew` 포함)
+2. jar를 만듭니다. 바탕화면에 `branch-radar.jar`가 생깁니다.
 
-## GitLab 토큰 설정
+   ```bash
+   ./gradlew bootJar        # Windows: gradlew.bat bootJar
+   ```
+
+3. jar를 둘 폴더를 정하고, 그 안에 `config/application.yml`을 만들어 내 환경 값만 적습니다.
+
+   ```
+   branch-radar/
+   ├─ branch-radar.jar
+   └─ config/
+      └─ application.yml
+   ```
+
+   ```yaml
+   branch-radar:
+     gitlab:
+       base-url: https://gitlab.mycompany.com   # 끝에 / 없이
+       project-id: group/my-app                 # 숫자 ID 도 가능
+       token: glpat-xxxxxxxxxxxxxxxx
+     flyway:
+       workers: [ejkim, ddd, aaa]               # Flyway 커밋 등록자
+     branch:
+       base: develop
+   ```
+
+4. 그 폴더에서 실행하고 브라우저로 **http://localhost:8443** 에 접속합니다.
+
+   ```bash
+   cd branch-radar
+   java -jar branch-radar.jar
+   ```
+
+## 설정 넣는 방법
+
+jar 안의 `src/main/resources/application.yml`에는 **예시 기본값만** 들어 있습니다. 실제 값은 jar 밖에서 넣으므로, 설정을 바꿔도 다시 빌드할 필요가 없습니다.
+아래 방법 중 편한 것을 쓰면 되고, 적은 항목만 기본값을 덮어씁니다(Spring Boot 기본 기능). 아래쪽일수록 우선합니다.
+
+| 방법 | 예 |
+|---|---|
+| 실행하는 폴더의 `config/application.yml` (또는 `application.yml`) | 위 "빠른 시작" 3번 |
+| 환경 변수 (점·하이픈 → `_`, 대문자) | `BRANCH_RADAR_GITLAB_TOKEN=glpat-...` |
+| 실행 인자 | `java -jar branch-radar.jar --branch-radar.gitlab.project-id=group/my-app` |
+
+> 토큰은 소스의 `src/main/resources/application.yml`에 적지 마세요. 그 파일은 git에 올라갑니다.
+> `config/` 폴더나 환경 변수에 넣으면 저장소와 jar 어디에도 남지 않습니다.
+
+## GitLab 토큰 발급
 
 1. GitLab → 우측 상단 프로필 → **Preferences → Access tokens** (또는 프로젝트 **Settings → Access tokens**)
 2. 조회만 쓸 때는 **`read_api`** 권한에 Reporter 역할이면 충분합니다.
    **Flyway 관리의 커밋** 을 쓰려면 **`api`** 권한과 Developer 이상 역할이 필요하고,
    보호 브랜치에 커밋하려면 토큰 계정이 그 브랜치의 "Allowed to push" 대상이어야 합니다.
-3. 발급한 토큰을 `src/main/resources/application.yml`에 직접 적습니다.
-
-```yaml
-branch-radar:
-  gitlab:
-    token: glpat-xxxxxxxxxxxxxxxx
-```
-
-> 토큰이 들어간 `application.yml`은 git에 커밋하지 마세요.
+3. 발급한 토큰을 `branch-radar.gitlab.token`에 넣습니다 (위 "설정 넣는 방법" 참고).
 
 토큰이 없어도 실행은 되지만, 공개 프로젝트만 조회할 수 있고 화면에 `토큰 없음` 배지가 표시됩니다.
 
-## 설정 (`src/main/resources/application.yml`)
+## 설정 항목
 
 | 항목 | 설명 | 기본값 |
 |---|---|---|
@@ -51,6 +89,7 @@ branch-radar:
 | `branch-radar.flyway.local-dir` | Flyway 파일과 임시저장을 두는 로컬 폴더 (실행 위치 기준) | `flyway-files` |
 | `branch-radar.flyway.sync-on-startup` | 시작할 때 기준 브랜치의 Flyway 파일을 로컬 폴더로 내려받기 | `true` |
 | `branch-radar.flyway.new-file-description` | Flyway 관리에서 만드는 파일명의 설명 부분 | `VADA` |
+| `branch-radar.flyway.workers` | Flyway 관리에서 고를 수 있는 커밋 등록자 목록. 예) `[ejkim, ddd, aaa]`. 비어 있으면 커밋 불가 | 비어 있음 |
 | `branch-radar.branch.base` | 대시보드 기본 기준 브랜치이자 Flyway 관리의 기준 브랜치 | `develop` |
 | `branch-radar.branch.fetch-concurrency` | 브랜치별 파일 목록을 동시에 조회하는 수 | 6 |
 | `branch-radar.stale-branch.warning-days` | 이 일수 이상 커밋이 없으면 "미갱신" (1 이상) | 30 |
@@ -61,19 +100,19 @@ branch-radar:
 | `branch-radar.tag.version-pattern` | Tag 이름에서 버전을 뽑는 정규식 (첫 번째 그룹) | 자동 (`1.2.3`, `1.2.3-rc.1`) |
 | `branch-radar.tag.max-lookups` | 브랜치별 Tag 판정에 쓰는 API 호출 상한 | 50 |
 
+이 밖에 `server.port`(기본 `8443`)로 접속 포트를 바꿀 수 있습니다.
+
 `stale-branch` 값이 규칙에 맞지 않거나 타임존 이름이 틀리면 **애플리케이션이 시작되지 않습니다.**
 
-설정 파일을 고치지 않고 실행 인자로 바꿀 수도 있습니다.
-예: `--branch-radar.gitlab.project-id=group/my-app`
-
-## 실행
+## 개발
 
 ```bash
-./gradlew bootRun                         # http://localhost:8080
-./gradlew test                            # 테스트
-./gradlew build                           # build/libs/branch-radar-0.1.0.jar
-java -jar build/libs/branch-radar-0.1.0.jar
+./gradlew bootRun     # 소스에서 바로 실행 → http://localhost:8443 (프로젝트 폴더의 config/application.yml 도 읽음)
+./gradlew test        # 테스트 (GitLab 서버 없이 실행)
+./gradlew bootJar     # 바탕화면에 branch-radar.jar 생성 (경로·이름은 build.gradle 의 bootJar 설정)
 ```
+
+`bootRun`으로 개발할 때도 프로젝트 폴더에 `config/application.yml`을 만들어 쓰면 됩니다. `config/` 폴더는 `.gitignore`에 들어 있어서 올라가지 않습니다.
 
 Bootstrap(WebJar)과 폰트(Pretendard, JetBrains Mono — 둘 다 SIL Open Font License)는 jar 안에 들어 있어서,
 인터넷이 막힌 사내망에서도 화면이 똑같이 보입니다.
@@ -107,7 +146,7 @@ Bootstrap(WebJar)과 폰트(Pretendard, JetBrains Mono — 둘 다 SIL Open Font
 
 ### 커밋
 
-- **등록자**를 반드시 골라야 합니다: `jwsung`, `ejkim`, `jwhan`, `chwonhan00` (`FlywayCommitService.WORKERS`에 고정). 설명은 선택입니다.
+- **등록자**를 반드시 골라야 합니다. 고를 수 있는 사람은 `flyway.workers` 설정의 목록이고, 목록이 비어 있으면 커밋할 수 없습니다. 설명은 선택입니다.
 - **파일명은 자동**입니다: `V{오늘 yyMMdd}.{순번 3자리}__VADA.sql`. 순번은 전체 브랜치에서 오늘 날짜로 쓰인 최대 순번 + 1이고, 날짜는 `stale-branch.timezone` 기준입니다. `VADA` 부분은 `flyway.new-file-description`으로 바꿀 수 있습니다.
   저장 위치는 기준 브랜치의 최신 Flyway가 있는 폴더입니다.
 - **커밋 메시지 양식**(고정):
@@ -115,7 +154,7 @@ Bootstrap(WebJar)과 폰트(Pretendard, JetBrains Mono — 둘 다 SIL Open Font
   ```
   🐦 V261102.001__VADA.sql
 
-  등록자 : jwhan
+  등록자 : {등록자}
   설명 : {설명}
   ```
 

@@ -87,6 +87,8 @@ public record GitLabProperties(Gitlab gitlab, Flyway flyway, Branch branch, Tag 
      * @param localDir           기준 브랜치의 Flyway 파일과 작성 중인 임시저장을 보관하는 로컬 폴더 (실행 위치 기준 상대 경로 가능)
      * @param syncOnStartup      시작할 때 기준 브랜치의 Flyway 파일을 localDir 로 내려받을지
      * @param newFileDescription Flyway 관리 화면에서 새로 만드는 파일의 설명 부분 (V261110.001__VADA.sql 의 VADA)
+     * @param workers            Flyway 관리에서 고를 수 있는 등록자 목록. 예) workers: [ejkim, ddd, aaa]
+     *                           비어 있으면 커밋할 수 없다
      */
     public record Flyway(
             @DefaultValue("src/main/resources/db/migration") String path,
@@ -97,7 +99,17 @@ public record GitLabProperties(Gitlab gitlab, Flyway flyway, Branch branch, Tag 
             @DefaultValue("true") boolean dateAwareOrdering,
             @DefaultValue("flyway-files") String localDir,
             @DefaultValue("true") boolean syncOnStartup,
-            @DefaultValue("VADA") String newFileDescription) {
+            @DefaultValue("VADA") String newFileDescription,
+            @DefaultValue List<String> workers) {
+
+        public Flyway {
+            // 공백 제거, 빈 값·중복 제거, 순서는 설정 그대로
+            workers = workers == null ? List.of() : workers.stream()
+                    .filter(w -> w != null && !w.isBlank())
+                    .map(String::trim)
+                    .distinct()
+                    .toList();
+        }
 
         /** 앞뒤 슬래시를 제거한 디렉터리 경로 */
         public String normalizedPath() {

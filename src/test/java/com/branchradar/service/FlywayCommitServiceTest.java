@@ -171,7 +171,7 @@ class FlywayCommitServiceTest {
                 .anyMatch(e -> e.contains("등록자"))
                 .anyMatch(e -> e.contains("SQL"))
                 .anyMatch(e -> e.contains("브랜치"));
-        assertThat(FlywayCommitService.WORKERS).containsExactly("jwsung", "ejkim", "jwhan", "chwonhan00");
+        assertThat(service.workers()).containsExactly("jwsung", "ejkim", "jwhan", "chwonhan00");
     }
 
     @Test

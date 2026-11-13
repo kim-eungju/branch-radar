@@ -38,9 +38,6 @@ import java.util.Set;
 @Service
 public class FlywayCommitService {
 
-    /** 커밋 등록자 (고정) */
-    public static final List<String> WORKERS = List.of("jwsung", "ejkim", "jwhan", "chwonhan00");
-
     /** 커밋 제목 앞머리: 새 이모지 + 공백 한 칸 */
     static final String SUMMARY_PREFIX = new String(Character.toChars(0x1F426)) + " ";
 
@@ -67,6 +64,11 @@ public class FlywayCommitService {
         this.branchService = branchService;
         this.store = store;
         this.clock = clock;
+    }
+
+    /** 커밋 등록자 목록 (application.yml 의 branch-radar.flyway.workers) */
+    public List<String> workers() {
+        return cfg.workers();
     }
 
     // ================================================================ 입출력
@@ -182,7 +184,7 @@ public class FlywayCommitService {
             throw new IllegalArgumentException("설명이 너무 깁니다 (최대 " + MAX_DESCRIPTION + "자).");
         }
         String worker = text(r.worker());
-        Draft next = new Draft(sql, description, WORKERS.contains(worker) ? worker : "", cleanBranches(r.branches()),
+        Draft next = new Draft(sql, description, workers().contains(worker) ? worker : "", cleanBranches(r.branches()),
                 nextRevision(current), now().format(STAMP), current == null ? null : current.pinnedVersion());
         store.writeDraft(next);
         return DraftView.of(next);
@@ -340,7 +342,9 @@ public class FlywayCommitService {
             errors.add("GitLab 토큰이 설정되지 않아 커밋할 수 없습니다 (application.yml 의 branch-radar.gitlab.token).");
         }
         String worker = text(r.worker());
-        if (!WORKERS.contains(worker)) {
+        if (workers().isEmpty()) {
+            errors.add("등록자 목록이 비어 있습니다 (application.yml 의 branch-radar.flyway.workers).");
+        } else if (!workers().contains(worker)) {
             errors.add("등록자를 선택하세요.");
         }
         String description = text(r.description());
