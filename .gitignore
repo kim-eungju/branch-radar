@@ -4,3 +4,7 @@ out/
 .idea/
 *.iml
 application-local.yml
+# GitLab 토큰 등 실제 설정이 들어가는 파일이라 올리지 않는다
+src/main/resources/application.yml
+# 실행할 때 사내 저장소에서 내려받는 Flyway 파일과 작성 중 임시저장
+flyway-files/
