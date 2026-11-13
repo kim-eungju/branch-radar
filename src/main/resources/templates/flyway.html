@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko" data-bs-theme="dark">
+<head th:replace="~{fragments/layout :: head('Flyway 관리')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: topbar('flyway', ${projectName}, ${projectWebUrl}, ${projectName != null})}"></header>
+
+<div class="br-shell">
+
+<main class="br-main">
+
+    <div class="br-page-head">
+        <div>
+            <h1>Flyway 관리</h1>
+            <div class="sub">
+                <span class="mono" th:text="${base}">develop</span> 브랜치의 Flyway 목록을 보고, 다음에 추가할 Flyway 를 함께 작성해 커밋합니다.
+            </div>
+        </div>
+    </div>
+
+    <div th:if="${error}" class="notice notice-danger">
+        <svg th:replace="~{fragments/layout :: icon('alert')}"></svg>
+        <div>
+            <div class="notice-title">조회 실패</div>
+            <div th:text="${error}"></div>
+        </div>
+    </div>
+
+    <div th:unless="${tokenConfigured}" class="notice notice-warn">
+        <svg th:replace="~{fragments/layout :: icon('alert')}"></svg>
+        <div>GitLab 토큰이 설정되지 않아 커밋할 수 없습니다. <code>application.yml</code> 의 <code>branch-radar.gitlab.token</code> 에 <code>api</code> 권한 토큰을 넣으세요.</div>
+    </div>
+
+    <!-- ============================== 작성 중인 Flyway -->
+    <!-- form 요소를 쓰지 않는다: Enter 키로 페이지가 넘어가거나 상단 로딩 바가 켜지지 않게 -->
+    <section class="panel" id="fwEditor" th:if="${branchNames}"
+             th:data-api-draft="@{/api/flyway/draft}"
+             th:data-api-validate="@{/api/flyway/validate}"
+             th:data-api-commit="@{/api/flyway/commit}"
+             th:data-revision="${draft.revision}"
+             th:data-project-web-url="${projectWebUrl}">
+        <div class="panel-head">
+            <svg th:replace="~{fragments/layout :: icon('filePlus')}"></svg> 작성 중인 Flyway
+            <span class="mono fw-filename" id="fwFileName" th:text="${expectedFileName}">V261112.001__VADA.sql</span>
+            <span class="hint" th:text="${draft.pinnedVersion != null} ? '일부 브랜치에 이미 커밋된 파일명 (고정)' : '파일명은 커밋할 때 오늘 날짜와 다음 순번으로 자동 지정'"></span>
+            <span id="fwSaved" class="hint ms-auto"
+                  th:text="${draft.exists} ? '임시저장됨 ' + ${draft.updatedAt} + (${draft.worker != ''} ? ' · ' + ${draft.worker} : '') : '임시저장 없음'"></span>
+        </div>
+        <div class="panel-body">
+            <div th:if="${draft.pinnedVersion != null}" class="notice notice-warn">
+                <svg th:replace="~{fragments/layout :: icon('alert')}"></svg>
+                <div>이 Flyway 는 일부 브랜치에 이미 커밋되었습니다. 아래에 선택된 브랜치는 그때 실패한 브랜치입니다.
+                    같은 내용으로 다시 커밋하세요. SQL 을 고치면 브랜치마다 내용이 달라져 충돌 위험이 생깁니다.</div>
+            </div>
+
+            <!-- 기본은 문법 강조된 보기 모드. '수정' 을 눌러야 입력 칸(textarea)이 나온다. 내용이 없으면 바로 수정 모드 -->
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <label for="fwSql" class="field-label">SQL</label>
+                <span id="fwModeLabel" class="chip">보기</span>
+                <button id="fwEditBtn" type="button" class="btn btn-ghost btn-sm ms-auto">수정</button>
+                <button id="fwViewBtn" type="button" class="btn btn-ghost btn-sm ms-auto d-none">보기로 전환</button>
+            </div>
+            <pre id="fwSqlView" class="sql-preview fw-sql-view"></pre>
+            <textarea id="fwSql" class="form-control fw-sql d-none" rows="16" spellcheck="false" wrap="off"
+                      placeholder="-- 여기에 SQL 을 이어서 작성하세요" th:text="${draft.sql}"></textarea>
+
+            <div class="fw-grid mt-3">
+                <div>
+                    <label for="fwWorker" class="field-label d-block mb-1">등록자 <span class="text-warn">(커밋 시 필수)</span></label>
+                    <select id="fwWorker" class="form-select" th:data-saved="${draft.worker}">
+                        <option value="">— 선택 —</option>
+                        <option th:each="w : ${workers}" th:value="${w}" th:text="${w}"></option>
+                    </select>
+                </div>
+                <div>
+                    <label for="fwDescription" class="field-label d-block mb-1">설명 <span class="text-faint">(선택 · 커밋 메시지에 들어갑니다)</span></label>
+                    <textarea id="fwDescription" class="form-control" rows="2" maxlength="1000" th:text="${draft.description}"></textarea>
+                </div>
+            </div>
+
+            <!-- 커밋할 브랜치: 대시보드의 Flyway 상태별 카드. 임시저장에 고른 브랜치가 있으면 그대로, 없으면 기준 브랜치만 선택 -->
+            <div class="d-flex align-items-center flex-wrap gap-2 mt-3 mb-2">
+                <span class="field-label">커밋할 브랜치 <span class="text-faint">(여러 개 선택 가능 · Flyway 상태별)</span></span>
+                <span class="chip chip-mono"><span id="fwBranchCount">0</span>개 선택</span>
+            </div>
+            <div class="fw-branch-search mb-2">
+                <label class="search">
+                    <svg th:replace="~{fragments/layout :: icon('search')}"></svg>
+                    <input id="fwBranchFilter" type="search" class="form-control" placeholder="커밋할 브랜치 검색 (이름 일부만 입력)" aria-label="커밋할 브랜치 검색" autocomplete="off">
+                </label>
+                <span id="fwBranchMatch" class="field-label d-none"></span>
+                <button id="fwBranchFilterClear" type="button" class="btn btn-ghost btn-sm d-none">검색 지우기</button>
+            </div>
+            <div class="fw-branch-cards" id="fwBranches">
+                <div th:each="g : ${branchGroups}" class="fw-branch-card" th:classappend="'st-' + ${g.color}">
+                    <div class="fw-branch-card-head">
+                        <span class="dot"></span>
+                        <span th:text="${g.label}">최신</span>
+                        <span class="count"><span class="fw-group-selected">0</span> / <span th:text="${g.branches.size()}">0</span></span>
+                        <span class="hint" th:text="${g.hint}"></span>
+                        <button type="button" class="fw-group-toggle ms-auto" th:unless="${g.branches.isEmpty()}">전체 선택</button>
+                    </div>
+                    <div class="fw-branches">
+                        <div th:if="${g.branches.isEmpty()}" class="fw-branch-empty">해당 브랜치 없음</div>
+                        <div class="fw-branch-empty fw-branch-nomatch d-none">검색 결과 없음</div>
+                        <label th:each="n : ${g.branches}" class="fw-branch" th:data-name="${n}">
+                            <input type="checkbox" class="form-check-input" th:value="${n}"
+                                   th:checked="${draft.branches.isEmpty() ? n == base : #lists.contains(draft.branches, n)}">
+                            <span class="mono" th:text="${n}">branch</span>
+                            <span th:if="${n == base}" class="chip chip-accent">기준</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div id="fwFormError" class="notice notice-danger mt-3 mb-0 d-none"></div>
+            <div class="d-flex align-items-center flex-wrap gap-2 mt-3">
+                <button id="fwSaveBtn" type="button" class="btn btn-ghost px-3">임시저장</button>
+                <button id="fwReviewBtn" type="button" class="btn btn-primary px-4" th:disabled="${!tokenConfigured}">커밋</button>
+                <span class="text-faint small">커밋은 검증 결과를 확인한 뒤 진행됩니다. 임시저장은 모든 작업자가 함께 보는 한 개입니다.</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- ============================== 기준 브랜치 Flyway 목록 -->
+    <section class="panel">
+        <div class="toolbar">
+            <span class="fw-list-title">
+                <svg th:replace="~{fragments/layout :: icon('db')}"></svg>
+                <span class="mono" th:text="${base}">develop</span> 브랜치 Flyway
+            </span>
+            <span class="chip chip-mono" th:if="${versioned}"><span id="fwShown" th:text="${versioned.size()}"></span> / <span th:text="${versioned.size()}"></span></span>
+            <a th:if="${baseSnapshot}" th:href="${links.commit(projectWebUrl, baseSnapshot.commitSha)}" target="_blank" rel="noopener noreferrer"
+               class="sha" th:text="${baseSnapshot.shortSha()}"></a>
+            <span class="grow"></span>
+            <label class="search" th:if="${versioned}">
+                <svg th:replace="~{fragments/layout :: icon('search')}"></svg>
+                <input id="fwListSearch" type="search" class="form-control form-control-sm" placeholder="버전 또는 파일명 검색" aria-label="Flyway 검색">
+            </label>
+        </div>
+
+        <div th:if="${listError}" class="notice notice-danger m-3">
+            <svg th:replace="~{fragments/layout :: icon('alert')}"></svg><div th:text="${listError}"></div>
+        </div>
+
+        <th:block th:if="${versioned}">
+            <div th:if="${versioned.isEmpty()}" class="empty"
+                 th:text="${baseSnapshot.dirMissing} ? '마이그레이션 디렉터리가 없습니다.' : '버전 Flyway 파일이 없습니다.'"></div>
+            <div th:unless="${versioned.isEmpty()}" class="table-wrap fw-list">
+                <table class="br-table">
+                    <thead><tr><th>버전</th><th>파일</th><th>경로</th><th>blob</th></tr></thead>
+                    <tbody>
+                    <tr th:each="m, it : ${versioned}" class="fw-row" th:data-search="${m.fileName}">
+                        <td class="mono text-nowrap">
+                            <span th:text="${m.version.raw}"></span>
+                            <span th:if="${it.first}" class="chip ms-1">최신</span>
+                        </td>
+                        <td>
+                            <a href="#" class="sql-link" th:data-ref="${baseSnapshot.commitSha}" th:data-path="${m.path}" th:data-file="${m.fileName}"
+                               th:data-web-url="${links.file(projectWebUrl, baseSnapshot.commitSha, m.path)}" th:text="${m.fileName}"></a>
+                        </td>
+                        <td class="mono text-faint" th:text="${m.path}"></td>
+                        <td class="mono text-faint" th:text="${m.shortBlob()}"></td>
+                    </tr>
+                    </tbody>
+                </table>
+                <div id="fwNoRows" class="empty d-none">조건에 맞는 Flyway 가 없습니다.</div>
+            </div>
+
+            <details class="fw-repeatable" th:unless="${baseSnapshot.repeatable.isEmpty()}">
+                <summary>Repeatable(R__) <span th:text="${baseSnapshot.repeatable.size()}"></span>개</summary>
+                <div th:each="m : ${baseSnapshot.repeatable}">
+                    <a href="#" class="sql-link" th:data-ref="${baseSnapshot.commitSha}" th:data-path="${m.path}" th:data-file="${m.fileName}"
+                       th:data-web-url="${links.file(projectWebUrl, baseSnapshot.commitSha, m.path)}" th:text="${m.fileName}"></a>
+                </div>
+            </details>
+            <div class="fw-ignored text-warn small" th:unless="${baseSnapshot.ignoredFiles.isEmpty()}"
+                 th:text="'이름 규칙에 맞지 않아 제외한 파일 ' + ${baseSnapshot.ignoredFiles.size()} + '개: ' + ${#strings.listJoin(baseSnapshot.ignoredFiles, ' | ')}"></div>
+        </th:block>
+    </section>
+
+    <div class="text-faint small mt-3">
+        로컬 저장 폴더 <span class="mono" th:text="${localDir}"></span>
+        <th:block th:if="${sync != null}">
+            <span th:if="${sync.error == null}"
+                  th:text="' · 시작 시 동기화: 전체 ' + ${sync.total} + ' · 새로 저장 ' + ${sync.saved} + ' · 이미 있음 ' + ${sync.skipped} + (${sync.failed > 0} ? ' · 실패 ' + ${sync.failed} : '')"></span>
+            <span th:if="${sync.error != null}" class="text-warn" th:text="' · 시작 시 동기화 실패: ' + ${sync.error}"></span>
+        </th:block>
+    </div>
+</main>
+</div>
+
+<!-- ============================================================ 임시저장 결과 알림 (내용은 textContent 로만 채움) -->
+<div id="fwToast" class="br-toast" role="status" aria-live="polite">
+    <span id="fwToastOk"><svg th:replace="~{fragments/layout :: icon('check')}"></svg></span>
+    <span id="fwToastFail" class="d-none"><svg th:replace="~{fragments/layout :: icon('alert')}"></svg></span>
+    <div>
+        <div id="fwToastTitle" class="br-toast-title"></div>
+        <div id="fwToastText" class="br-toast-text"></div>
+    </div>
+</div>
+
+<!-- ============================================================ 커밋 확인 / 결과 모달 (내용은 textContent 로만 채움) -->
+<div class="modal fade" id="fwConfirm" tabindex="-1" aria-labelledby="fwConfirmTitle" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="fwConfirmTitle">커밋 확인</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="닫기"></button>
+            </div>
+            <div class="modal-body">
+                <dl class="kv mt-0">
+                    <dt>파일</dt><dd id="fwcPath" class="mono fw-break"></dd>
+                    <dt>SQL</dt><dd id="fwcSize"></dd>
+                    <dt>커밋 메시지</dt><dd><pre id="fwcMessage" class="fw-message"></pre></dd>
+                </dl>
+                <div id="fwcIssues" class="mt-3"></div>
+                <div id="fwcBranches" class="mt-3"></div>
+                <pre id="fwcSql" class="sql-preview plain fw-confirm-sql mt-3"></pre>
+            </div>
+            <div class="modal-footer">
+                <span id="fwcStatus" class="small text-muted-2 me-auto"></span>
+                <a id="fwDashboardBtn" th:href="@{/}" class="btn btn-ghost btn-sm d-none">대시보드로 이동</a>
+                <button type="button" class="btn btn-ghost btn-sm" data-bs-dismiss="modal" id="fwCloseBtn">취소</button>
+                <button id="fwCommitBtn" type="button" class="btn btn-primary btn-sm px-3" disabled>커밋</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div th:replace="~{fragments/layout :: sqlModal}"></div>
+<th:block th:replace="~{fragments/layout :: scripts}"></th:block>
+<script th:src="@{/js/flyway.js}"></script>
+</body>
+</html>

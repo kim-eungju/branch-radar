@@ -1,0 +1,59 @@
+server:
+  port: 8443
+
+spring:
+  application:
+    name: branch-radar
+  thymeleaf:
+    cache: false
+
+branch-radar:
+  gitlab:
+    # GitLab 서버 주소 (끝에 / 없이)
+    base-url: https://gitlab.example.com
+    # 숫자 ID(123) 또는 경로(group/sub-group/project) 모두 가능
+    project-id: 123
+    # ↓ 여기에 GitLab 토큰을 직접 입력한다. 예) token: glpat-xxxxxxxxxxxx
+    #   조회만 쓰면 read_api, 'Flyway 작성'(커밋)까지 쓰면 api 권한 + Developer 이상 역할이 필요하다.
+    #   비워두면 인증 없이 호출한다(공개 프로젝트만 조회 가능, 커밋 불가).
+    token: ""
+    connect-timeout: 5s
+    read-timeout: 30s
+    # 페이지네이션 최대 페이지 수 (per_page=100). 초과하면 "일부 결과"로 표시한다.
+    max-pages: 50
+  flyway:
+    # 저장소 루트 기준 마이그레이션 디렉터리 (하위 폴더 포함 검색)
+    path: src/main/resources/db/migration
+    versioned-prefix: V
+    repeatable-prefix: R
+    separator: "__"
+    suffixes: [".sql"]
+    # true: 버전 첫 부분이 날짜(yyMMdd, yyyyMMdd, yyyyMMddHHmm, yyyyMMddHHmmss)면 날짜 의미로 정렬
+    date-aware-ordering: true
+    # 기준 브랜치의 Flyway 파일, 커밋한 파일, 작성 중인 임시저장을 보관하는 로컬 폴더 (실행 위치 기준)
+    local-dir: flyway-files
+    # 시작할 때 기준 브랜치(branch.base)의 Flyway 파일을 local-dir 로 내려받는다 (이미 있는 파일은 건너뜀)
+    sync-on-startup: true
+    # 'Flyway 관리' 에서 새로 만드는 파일의 설명 부분. 파일명은 V{yyMMdd}.{순번 3자리}__{이 값}.sql
+    new-file-description: VADA
+  branch:
+    # 대시보드 기본 기준 브랜치 (화면에서 변경 가능, 저장되지 않음)
+    base: develop
+    # 브랜치별 트리 조회 동시 실행 수
+    fetch-concurrency: 6
+  stale-branch:
+    # 마지막 커밋 후 이 일수 이상이면 '미갱신'(회색), danger-days 이상이면 '장기 미갱신'(빨강)
+    # 조건: warning-days >= 1, danger-days > warning-days (위반 시 시작 실패)
+    warning-days: 30
+    danger-days: 60
+    # 경과 일수는 이 타임존의 '날짜' 차이로 계산한다
+    timezone: Asia/Seoul
+  tag:
+    enabled: true
+    # 최신 태그 판정 정렬 정책: semver(태그명 속 버전) | created(annotated 태그 생성일) | name(문자열)
+    sort: semver
+    # 태그 이름에서 버전을 뽑는 정규식(첫 번째 캡처 그룹). 비우면 1.2.3 / 1.2.3-rc.1 형태를 자동 추출
+    # 예) "^app-v(\\d+\\.\\d+\\.\\d+)$"
+    version-pattern:
+    # 브랜치별 최근 태그 판정 시 "커밋 포함 브랜치" API 최대 호출 수. 초과하면 남은 브랜치는 '확인 불가'
+    max-lookups: 50

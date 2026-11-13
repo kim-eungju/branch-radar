@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko" data-bs-theme="dark">
+<head th:replace="~{fragments/layout :: head('대시보드')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: topbar('dashboard', ${view?.projectName}, ${view?.projectWebUrl}, ${view != null})}"></header>
+
+<div class="br-shell">
+
+<main class="br-main">
+
+    <div class="br-page-head">
+        <div>
+            <h1>대시보드</h1>
+            <div class="sub">브랜치별 Flyway 상태 · 패키지 버전 · 활동 현황</div>
+        </div>
+    </div>
+
+    <!-- GitLab 연결 실패 -->
+    <div th:if="${error}" class="notice notice-danger">
+        <svg th:replace="~{fragments/layout :: icon('alert')}"></svg>
+        <div>
+            <div class="notice-title">GitLab 연결 실패</div>
+            <div th:text="${error}"></div>
+            <div class="mt-1 small">src/main/resources/application.yml 의 <code>base-url</code>, <code>project-id</code>, <code>token</code> 을 확인하세요.</div>
+        </div>
+    </div>
+
+    <th:block th:if="${view}">
+
+        <!-- ============================== 위쪽: 왼쪽 요약 타일 6개 / 오른쪽 작성 중·최신 Flyway·최신 패키지 버전 -->
+        <div class="dash-top">
+        <!-- 요약 타일 (클릭 → 필터) -->
+        <div class="tiles">
+            <div class="tile t-accent clickable" tabindex="0" role="button" data-filter-reset title="필터 초기화">
+                <div class="label"><svg th:replace="~{fragments/layout :: icon('branch')}"></svg> 전체 브랜치</div>
+                <div class="value" th:text="${view.rows.size()}">0</div>
+                <div class="foot">
+                    파일 없음 <span th:text="${view.count('NO_FILES')}"></span> ·
+                    조회 불가 <span th:text="${view.count('ERROR')}"></span>
+                </div>
+            </div>
+            <div class="tile t-ok clickable" tabindex="0" role="button" data-filter-target="statusFilter" data-filter-value="UP_TO_DATE">
+                <div class="label">Flyway 최신</div>
+                <div class="value text-ok" th:text="${view.count('UP_TO_DATE')}">0</div>
+                <div class="foot">전체 최신 Flyway 포함</div>
+            </div>
+            <div class="tile t-warn clickable" tabindex="0" role="button" data-filter-target="statusFilter" data-filter-value="BEHIND">
+                <div class="label">뒤처짐</div>
+                <div class="value" th:classappend="${view.count('BEHIND') > 0} ? 'text-warn'" th:text="${view.count('BEHIND')}">0</div>
+                <div class="foot">최신 Flyway 없음</div>
+            </div>
+            <div class="tile t-danger clickable" tabindex="0" role="button" data-filter-target="statusFilter" data-filter-value="CONFLICT">
+                <div class="label">충돌 위험</div>
+                <div class="value" th:classappend="${view.count('CONFLICT') > 0} ? 'text-danger-br'" th:text="${view.count('CONFLICT')}">0</div>
+                <div class="foot">같은 버전 · 다른 SQL</div>
+            </div>
+            <div class="tile t-neutral clickable" tabindex="0" role="button" data-filter-target="activityFilter" data-filter-value="STALE">
+                <div class="label"><svg th:replace="~{fragments/layout :: icon('clock')}"></svg>
+                    <span th:text="${view.staleWarningDays} + '~' + ${view.staleDangerDays - 1} + '일 미갱신'">미갱신</span></div>
+                <div class="value" th:text="${view.activityCount('STALE')}">0</div>
+                <div class="foot">마지막 커밋 기준</div>
+            </div>
+            <div class="tile t-danger clickable" tabindex="0" role="button" data-filter-target="activityFilter" data-filter-value="VERY_STALE">
+                <div class="label"><svg th:replace="~{fragments/layout :: icon('clock')}"></svg>
+                    <span th:text="${view.staleDangerDays} + '일+ 장기 미갱신'">장기 미갱신</span></div>
+                <div class="value" th:classappend="${view.activityCount('VERY_STALE') > 0} ? 'text-danger-br'" th:text="${view.activityCount('VERY_STALE')}">0</div>
+                <div class="foot">확인 불가 <span th:text="${view.activityCount('UNKNOWN')}"></span></div>
+            </div>
+        </div>
+
+        <!-- ============================== 작성 중인 Flyway / 최신 Flyway / 최신 패키지 버전 (항상 3칸) -->
+        <div class="highlights">
+            <!-- 작성 중인 Flyway: Jenkins 의 '빌드 중' 카드 (깜빡이는 파랑 볼 + 진행 바) -->
+            <section class="jk-card jk-building draft-panel" th:if="${draft}">
+                <div class="jk-head">
+                    <span class="jk-ball" aria-hidden="true"></span>
+                    <span class="jk-title">작성 중인 Flyway</span>
+                    <span class="jk-chip ms-auto"
+                          th:text="${draft.pinnedVersion != null} ? '일부 커밋됨' : '커밋 전'"
+                          th:title="${draft.pinnedVersion != null} ? '일부 브랜치에 이미 커밋됨 · 남은 브랜치 대기' : '파일명은 커밋 시점에 확정됩니다'">커밋 전</span>
+                </div>
+                <div class="jk-body">
+                    <div class="jk-build">
+                        <span class="jk-hash">#</span>
+                        <span class="jk-num" th:text="${draftFileName}">V261112.001__VADA.sql</span>
+                    </div>
+                    <div class="jk-progress" role="presentation"><span></span></div>
+                    <ul class="jk-links">
+                        <li><span class="k">마지막 저장</span>
+                            <span class="v"><span th:text="${draft.updatedAt ?: '-'}"></span><span th:if="${draft.worker != ''}" th:text="' · ' + ${draft.worker}"></span><span th:text="' · ' + ${draft.lines} + '줄'"></span></span></li>
+                        <li><span class="k">대상 브랜치</span>
+                            <span class="v" th:text="${draft.branches.isEmpty()} ? '-' : ${#strings.listJoin(draft.branches, ', ')}"></span></li>
+                    </ul>
+                    <div class="jk-actions">
+                        <!-- SQL 은 숨겨둔 pre 에 넣고 공용 SQL 모달로 띄운다 (textContent 로만 옮김) -->
+                        <button type="button" class="jk-btn jk-btn-ghost sql-local" th:unless="${draft.sql == ''}"
+                                data-source="draftSqlSource" th:data-file="${draftFileName}"
+                                th:data-meta="'작성 중 · 커밋 전' + (${draft.updatedAt != null} ? ' · ' + ${draft.updatedAt} : '')">
+                            <svg th:replace="~{fragments/layout :: icon('search')}"></svg> SQL 보기
+                        </button>
+                        <a th:href="@{/flyway}" class="jk-btn">
+                            <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M7 4v16l13-8z" fill="currentColor"/></svg>
+                            이어서 작성
+                        </a>
+                    </div>
+                    <pre id="draftSqlSource" hidden th:unless="${draft.sql == ''}" th:text="${draft.sql}"></pre>
+                </div>
+            </section>
+
+            <!-- 작성 중인 것이 없을 때: Jenkins 의 '빌드 안 됨' (회색 빈 볼) -->
+            <section class="jk-card jk-notbuilt draft-empty" th:unless="${draft}">
+                <div class="jk-head">
+                    <span class="jk-ball" aria-hidden="true"></span>
+                    <span class="jk-title">작성 중인 Flyway</span>
+                </div>
+                <div class="jk-body jk-empty">
+                    <div class="jk-empty-text">작성 중인 Flyway 가 없습니다.</div>
+                    <a th:href="@{/flyway}" class="jk-btn jk-btn-lg">
+                        <svg th:replace="~{fragments/layout :: icon('filePlus')}"></svg> 새 Flyway 작성
+                    </a>
+                </div>
+            </section>
+
+            <!-- 전체 브랜치 최신 Flyway: 정상(초록 체크) / 충돌(빨강 X) -->
+            <section class="jk-card"
+                     th:classappend="${view.latest == null} ? 'jk-notbuilt' : (${view.latest.conflict} ? 'jk-failed' : 'jk-success')">
+                <div class="jk-head">
+                    <span class="jk-ball" aria-hidden="true"></span>
+                    <span class="jk-title">전체 브랜치 최신 Flyway</span>
+                    <span th:if="${view.latest != null and view.latest.conflict}" class="jk-chip jk-chip-danger ms-auto">버전 충돌</span>
+                </div>
+                <div class="jk-body">
+                    <div th:if="${view.latest == null}" class="jk-empty-text">어느 브랜치에도 Flyway 파일이 없습니다.</div>
+                    <th:block th:if="${view.latest != null}">
+                        <div class="jk-build">
+                            <span class="jk-hash">#</span>
+                            <span class="jk-num" th:text="'V' + ${view.latest.version}">V1</span>
+                        </div>
+                        <div th:if="${view.latest.conflict}" class="jk-caption jk-caption-danger">
+                            같은 최신 버전에 서로 다른 파일/SQL 이 <span th:text="${view.latest.variants.size()}"></span>개 있습니다.
+                        </div>
+                        <ul class="jk-history">
+                            <li th:each="v : ${view.latest.variants}">
+                                <span class="jk-dot" aria-hidden="true"></span>
+                                <div class="jk-history-main">
+                                    <a href="#" class="sql-link"
+                                       th:data-ref="${v.ref}" th:data-path="${v.migration.path}" th:data-file="${v.migration.fileName}"
+                                       th:data-web-url="${links.file(view.projectWebUrl, v.ref, v.migration.path)}"
+                                       th:text="${v.migration.fileName}">file.sql</a>
+                                    <div class="jk-history-sub">
+                                        <span class="mono" th:text="'blob ' + ${v.migration.shortBlob()}"></span>
+                                        · 보유 <span th:text="${v.branches.size()}"></span>개:
+                                        <span th:text="${v.branches.size() > 4 ? #strings.listJoin(v.branches.subList(0, 4), ', ') + ' 외 ' + (v.branches.size() - 4) + '개' : #strings.listJoin(v.branches, ', ')}"></span>
+                                    </div>
+                                </div>
+                            </li>
+                        </ul>
+                    </th:block>
+                </div>
+            </section>
+
+            <!-- 최신 패키지 버전: Jenkins 의 'Last successful build' 카드 -->
+            <section class="jk-card" th:with="tags=${view.tags}"
+                     th:classappend="${tags.enabled and tags.error != null} ? 'jk-failed' : (${tags.enabled and tags.latest != null} ? 'jk-success' : 'jk-notbuilt')">
+                <div class="jk-head">
+                    <span class="jk-ball" aria-hidden="true"></span>
+                    <span class="jk-title">최신 패키지 버전</span>
+                    <span class="jk-meta ms-auto" th:if="${tags.enabled}" th:text="'Tag ' + ${tags.totalTags} + ' · ' + ${tags.sortPolicy}"></span>
+                </div>
+                <div class="jk-body">
+                    <div th:unless="${tags.enabled}" class="jk-empty-text">Tag 조회 비활성화</div>
+                    <div th:if="${tags.enabled and tags.error != null}" class="jk-caption jk-caption-danger" th:text="${tags.error}"></div>
+                    <th:block th:if="${tags.enabled and tags.error == null}">
+                        <th:block th:if="${tags.latest != null}">
+                            <div class="jk-build">
+                                <svg th:replace="~{fragments/layout :: icon('tag')}"></svg>
+                                <a class="jk-num" th:href="${links.tag(view.projectWebUrl, tags.latest.name)}" target="_blank" rel="noopener noreferrer"
+                                   th:text="${tags.latest.name}">v1.0.0</a>
+                            </div>
+                            <ul class="jk-links">
+                                <li><span class="k">패키지 버전</span>
+                                    <span class="v"><span class="mono" th:text="${tags.latest.version ?: '(추출 불가)'}"></span><span class="text-faint" th:text="' · ' + (${tags.latest.annotated} ? 'Annotated' : 'Lightweight')"></span></span></li>
+                                <li><span class="k">Tag 생성일</span>
+                                    <span class="v">
+                                        <span th:if="${tags.latest.createdAt != null}" th:text="${#temporals.format(tags.latest.createdAt, 'yyyy-MM-dd HH:mm')}"></span>
+                                        <span th:if="${tags.latest.createdAt == null}" class="text-faint">lightweight · 생성일 없음</span>
+                                    </span></li>
+                                <li><span class="k">대상 커밋</span>
+                                    <span class="v">
+                                        <a class="sha" th:href="${links.commit(view.projectWebUrl, tags.latest.commitSha)}" target="_blank" rel="noopener noreferrer"
+                                           th:text="${tags.latest.shortSha()}"></a>
+                                        <span class="text-faint" th:text="${tags.latest.commitDate != null ? ' · ' + #temporals.format(tags.latest.commitDate, 'yyyy-MM-dd HH:mm') : ''}"></span>
+                                    </span></li>
+                            </ul>
+                        </th:block>
+                        <div th:if="${tags.latest == null}" class="jk-empty-text" th:text="${tags.totalTags == 0 ? 'Tag 없음' : '확인 불가'}">Tag 없음</div>
+                    </th:block>
+                </div>
+            </section>
+        </div>
+
+        </div><!-- /dash-top -->
+
+        <!-- 결과가 완전하지 않은 경우 안내 -->
+        <div th:each="n : ${view.notices}" class="notice notice-warn">
+            <svg th:replace="~{fragments/layout :: icon('alert')}"></svg><div th:text="${n}"></div>
+        </div>
+        <div th:each="n : ${view.tags.notices}" class="notice notice-info">
+            <svg th:replace="~{fragments/layout :: icon('info')}"></svg><div th:text="'Tag · ' + ${n}"></div>
+        </div>
+
+        <!-- ============================== 브랜치 테이블 -->
+        <section class="panel">
+            <div class="toolbar">
+                <label class="search">
+                    <svg th:replace="~{fragments/layout :: icon('search')}"></svg>
+                    <input id="branchSearch" type="search" class="form-control form-control-sm" placeholder="브랜치 검색" aria-label="브랜치 검색">
+                </label>
+                <select id="statusFilter" class="form-select form-select-sm w-auto" aria-label="Flyway 상태 필터">
+                    <option value="">Flyway: 전체</option>
+                    <option value="WARNING">경고만 (뒤처짐+충돌)</option>
+                    <option value="UP_TO_DATE">최신</option>
+                    <option value="BEHIND">뒤처짐</option>
+                    <option value="CONFLICT">충돌 위험</option>
+                    <option value="NO_FILES">파일 없음</option>
+                    <option value="ERROR">조회 불가</option>
+                </select>
+                <select id="activityFilter" class="form-select form-select-sm w-auto" aria-label="브랜치 활동 상태 필터">
+                    <option value="">활동: 전체</option>
+                    <option value="ACTIVE">활성</option>
+                    <option value="STALE_PLUS" th:text="${view.staleWarningDays} + '일 이상 미갱신'">30일 이상 미갱신</option>
+                    <option value="STALE" th:text="${view.staleWarningDays} + '~' + ${view.staleDangerDays - 1} + '일 미갱신'">30~59일 미갱신</option>
+                    <option value="VERY_STALE" th:text="${view.staleDangerDays} + '일 이상 미갱신'">60일 이상 미갱신</option>
+                    <option value="UNKNOWN">확인 불가</option>
+                </select>
+                <span class="field-label"><span id="shownCount" th:text="${view.rows.size()}"></span> / <span th:text="${view.rows.size()}"></span></span>
+                <span class="grow"></span>
+                <form method="get" th:action="@{/}" class="d-flex align-items-center gap-2 m-0">
+                    <label for="baseSelect" class="field-label">기준 브랜치</label>
+                    <select id="baseSelect" name="base" class="form-select form-select-sm w-auto" onchange="this.form.submit()">
+                        <option th:unless="${view.baseFound}" th:value="${view.baseBranch}" selected
+                                th:text="${view.baseBranch} + ' (없음)'"></option>
+                        <option th:each="n : ${view.branchNames}" th:value="${n}" th:text="${n}"
+                                th:selected="${n == view.baseBranch}"></option>
+                    </select>
+                    <noscript><button class="btn btn-sm btn-primary">적용</button></noscript>
+                </form>
+            </div>
+
+            <div class="table-wrap">
+                <table class="br-table">
+                    <thead>
+                    <tr>
+                        <th class="col-ball"></th>
+                        <th>브랜치</th>
+                        <th>마지막 커밋</th>
+                        <th>
+                            <button id="sortDaysBtn" type="button" class="th-sort" title="경과 일수 내림차순 정렬 (다시 누르면 원래 순서)">
+                                경과 <svg th:replace="~{fragments/layout :: icon('sort')}"></svg>
+                            </button>
+                        </th>
+                        <th>활동</th>
+                        <th>최신 Flyway</th>
+                        <th>Flyway 상태</th>
+                        <th th:text="'기준(' + ${view.baseBranch} + ') 대비'">기준 대비</th>
+                        <th>최근 Tag</th>
+                        <th></th>
+                    </tr>
+                    </thead>
+                    <tbody>
+                    <tr th:each="row : ${view.rows}" class="branch-row"
+                        th:with="act=${view.activity(row.branch.name)}"
+                        th:classappend="${row.base} ? 'base-row'"
+                        th:data-name="${row.branch.name}" th:data-status="${row.status.name()}"
+                        th:data-activity="${act.state.name()}" th:data-days="${act.days ?: -1}">
+
+                        <!-- 상태 점 (Jenkins 스타일) -->
+                        <td class="col-ball">
+                            <span class="ball" th:classappend="'st-' + ${row.status.color}" th:title="${row.status.label}"></span>
+                        </td>
+
+                        <!-- 브랜치 -->
+                        <td>
+                            <a th:href="${links.branch(view.projectWebUrl, row.branch.name)}" target="_blank" rel="noopener noreferrer"
+                               class="branch-name" th:text="${row.branch.name}">branch</a>
+                            <span th:if="${row.base}" class="chip chip-accent ms-1">기준</span>
+                            <div class="sub reason" th:text="${row.branch.commitTitle}" th:title="${row.branch.commitTitle}"></div>
+                        </td>
+
+                        <!-- 마지막 커밋 (설정 타임존 기준 날짜, 브랜치 생성일 아님) -->
+                        <td class="text-nowrap">
+                            <div th:text="${act.lastCommitDate != null ? #temporals.format(act.lastCommitDate, 'yyyy-MM-dd') : '-'}"></div>
+                            <a th:href="${links.commit(view.projectWebUrl, row.branch.commitSha)}" target="_blank" rel="noopener noreferrer"
+                               class="sha" th:text="${row.branch.shortSha()}">sha</a>
+                        </td>
+
+                        <!-- 경과 -->
+                        <td class="text-nowrap mono" th:text="${act.days != null ? act.days + '일' : '-'}"></td>
+
+                        <!-- 활동 상태 (Flyway 상태와 독립) -->
+                        <td class="text-nowrap">
+                            <span class="st" th:classappend="'st-' + ${act.state.badgeClass}"
+                                  th:title="${act.state.name() == 'UNKNOWN' ? '마지막 커밋 날짜가 없거나 미래 날짜' : ''}">
+                                <span th:if="${act.state.name() != 'ACTIVE'}" class="dot"></span><span th:text="${act.state.label}"></span>
+                            </span>
+                        </td>
+
+                        <!-- 최신 Flyway -->
+                        <td>
+                            <th:block th:if="${row.latest != null}">
+                                <a href="#" class="sql-link"
+                                   th:data-ref="${row.branch.commitSha}" th:data-path="${row.latest.path}" th:data-file="${row.latest.fileName}"
+                                   th:data-web-url="${links.file(view.projectWebUrl, row.branch.commitSha, row.latest.path)}"
+                                   th:text="${row.latest.fileName}">file</a>
+                                <div class="sub">
+                                    <span th:text="${row.branch.versioned.size()} + '개'"></span>
+                                    <span th:if="${!row.branch.repeatable.isEmpty()}" th:text="' · R ' + ${row.branch.repeatable.size()}"></span>
+                                    <span th:if="${!row.branch.ignoredFiles.isEmpty()}" class="text-warn"
+                                          th:title="${#strings.listJoin(row.branch.ignoredFiles, ' | ')}"
+                                          th:text="' · 규칙 불일치 ' + ${row.branch.ignoredFiles.size()}"></span>
+                                </div>
+                            </th:block>
+                            <span th:if="${row.latest == null}" class="text-faint">—</span>
+                        </td>
+
+                        <!-- Flyway 상태 -->
+                        <td th:title="${row.message}">
+                            <span class="st" th:classappend="'st-' + ${row.status.color}"><span class="dot"></span><span th:text="${row.status.label}"></span></span>
+                            <div class="reason" th:switch="${row.status.name()}">
+                                <span th:case="'UP_TO_DATE'">전체 최신 포함</span>
+                                <span th:case="'BEHIND'">
+                                    <span th:text="'V' + ${view.latest.version} + ' 없음'"></span>
+                                    <a th:if="${view.latestRefBranch != null and view.latestRefBranch != row.branch.name}"
+                                       th:href="@{/compare(a=${view.latestRefBranch}, b=${row.branch.name})}"
+                                       th:text="' · 누락 ' + ${row.missingVsLatestRef} + '개'"></a>
+                                </span>
+                                <span th:case="'CONFLICT'"
+                                      th:text="${!row.duplicateVersions.isEmpty() ? '브랜치 내 버전 중복 → Flyway 실행 오류' : '충돌: V' + #strings.listJoin(row.conflictVersions, ', V')}"></span>
+                                <span th:case="*" th:text="${row.message}"></span>
+                            </div>
+                        </td>
+
+                        <!-- 기준 브랜치 대비 -->
+                        <td class="text-nowrap">
+                            <th:block th:if="${row.missingVsBase != null}">
+                                <a th:href="@{/compare(a=${view.baseBranch}, b=${row.branch.name})}"
+                                   th:classappend="${row.missingVsBase > 0} ? 'text-danger-br fw-semibold' : 'text-muted-2'"
+                                   th:text="'누락 ' + ${row.missingVsBase}"></a>
+                                <span class="text-faint" th:text="' · 추가 ' + ${row.extraVsBase ?: 0}"></span>
+                            </th:block>
+                            <span th:if="${row.missingVsBase == null}" class="text-faint" th:text="${row.base ? '기준' : '—'}"></span>
+                        </td>
+
+                        <!-- 최근 Tag (Flyway 상태와 독립) -->
+                        <td class="text-nowrap" th:with="bt=${view.tags.forBranch(row.branch.name)}">
+                            <th:block th:if="${view.tags.enabled}">
+                                <th:block th:if="${bt.state.name() == 'FOUND'}">
+                                    <a th:href="${links.tag(view.projectWebUrl, bt.tag.name)}" target="_blank" rel="noopener noreferrer"
+                                       class="mono" th:text="${bt.tag.name}">v1</a>
+                                    <span th:if="${view.tags.latest != null and bt.tag.name == view.tags.latest.name}" class="chip ms-1">최신</span>
+                                </th:block>
+                                <span th:if="${bt.state.name() == 'NONE'}" class="text-faint">Tag 없음</span>
+                                <span th:if="${bt.state.name() == 'UNKNOWN'}" class="text-faint" title="조회 상한·오류·불완전한 목록으로 판정하지 않음">확인 불가</span>
+                            </th:block>
+                            <span th:unless="${view.tags.enabled}" class="text-faint">—</span>
+                        </td>
+
+                        <!-- 바로가기 -->
+                        <td class="text-nowrap text-end">
+                            <a th:href="@{/compare(a=${view.baseBranch}, b=${row.branch.name})}" class="btn btn-ghost btn-sm btn-icon" title="기준 브랜치와 비교">
+                                <svg th:replace="~{fragments/layout :: icon('compare')}"></svg>
+                            </a>
+                            <a th:href="${links.branch(view.projectWebUrl, row.branch.name)}" target="_blank" rel="noopener noreferrer"
+                               class="btn btn-ghost btn-sm btn-icon" title="GitLab 에서 열기">
+                                <svg th:replace="~{fragments/layout :: icon('external')}"></svg>
+                            </a>
+                        </td>
+                    </tr>
+                    </tbody>
+                </table>
+                <div id="noRows" class="empty d-none">조건에 맞는 브랜치가 없습니다.</div>
+            </div>
+        </section>
+
+        <details class="guide">
+            <summary>판정 기준 안내</summary>
+            <ul>
+                <li><b>뒤처짐</b>: 전체 브랜치 중 가장 높은 Flyway 버전 파일이 없음. 이전 버전을 유지하는 release 브랜치일 수 있으며, 배포 오류가 확정된 것은 아닙니다.</li>
+                <li><b>충돌 위험</b>: 같은 버전에 다른 파일명/SQL 이 존재하거나, 한 브랜치 안에 같은 버전이 둘 이상 있음(Flyway 실행 시 실제 오류).
+                    기준 브랜치에 있는 버전은 기준 브랜치의 파일을 정답으로 보고, 그와 다른 브랜치만 충돌로 표시합니다.</li>
+                <li>SQL 내용 비교는 Git blob SHA 로 하며, Flyway checksum(CRC32)과는 다른 값입니다.</li>
+                <li>활동 상태는 마지막 커밋 날짜(<span th:text="${view.staleWarningDays}"></span>일 / <span th:text="${view.staleDangerDays}"></span>일 기준)이며, 브랜치 생성일이 아닙니다.</li>
+            </ul>
+        </details>
+    </th:block>
+</main>
+</div>
+
+<div th:replace="~{fragments/layout :: sqlModal}"></div>
+<th:block th:replace="~{fragments/layout :: scripts}"></th:block>
+</body>
+</html>

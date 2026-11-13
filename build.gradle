@@ -1,0 +1,38 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '3.5.16'
+    id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.branchradar'
+version = '0.1.0'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-thymeleaf'
+    // Bootstrap을 jar로 함께 배포 (사내망에서 CDN 접근이 막혀 있어도 동작)
+    implementation 'org.webjars:bootstrap:5.3.8'
+
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// bootJar 결과물을 실행한 사람의 바탕화면에 버전 없이 만든다 (예: C:\Users\<사용자>\Desktop\branch-radar.jar)
+tasks.named('bootJar') {
+    destinationDirectory = file("${System.getProperty('user.home')}/Desktop")
+    archiveFileName = 'branch-radar.jar'
+}
