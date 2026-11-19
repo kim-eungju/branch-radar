@@ -126,6 +126,11 @@
     }
     window.BranchRadar = { renderSql: renderSql };
 
+    // 이번 묶음 조각의 SQL 을 문법 강조로 다시 그린다 (서버가 th:text 로 넣은 내용을 그대로 사용)
+    document.querySelectorAll('pre.fw-post-sql').forEach(function (pre) {
+        renderSql(pre, pre.textContent);
+    });
+
     function openSql(link) {
         var ref = link.dataset.ref;
         var path = link.dataset.path;
@@ -331,6 +336,165 @@
         });
     }
 
+    // ---------------------------------------------------------------- 검색되는 select
+    // select[data-searchable] 을 "누르면 검색칸 + 목록이 열리는" 선택 상자로 바꾼다.
+    // 원래 select 는 숨겨서 그대로 두므로 form 전송과 값 변경(select._brRefresh())이 그대로 동작한다.
+    function enhanceSelect(select) {
+        var wrap = document.createElement('div');
+        wrap.className = 'sselect';
+        select.parentNode.insertBefore(wrap, select);
+        wrap.appendChild(select);
+
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'form-select sselect-btn';
+        if (select.id) {
+            // label 을 누르면 이 버튼으로 오게 한다
+            btn.id = select.id + 'Btn';
+            var label = document.querySelector('label[for="' + select.id + '"]');
+            if (label) label.htmlFor = btn.id;
+        }
+        btn.setAttribute('aria-haspopup', 'listbox');
+        btn.setAttribute('aria-expanded', 'false');
+        var valueEl = document.createElement('span');
+        valueEl.className = 'sselect-value';
+        btn.appendChild(valueEl);
+        wrap.appendChild(btn);
+
+        var pop = document.createElement('div');
+        pop.className = 'sselect-pop';
+        pop.hidden = true;
+        var input = document.createElement('input');
+        input.type = 'search';
+        input.className = 'form-control form-control-sm';
+        input.placeholder = '검색 (이름 일부만 입력)';
+        input.setAttribute('autocomplete', 'off');
+        var list = document.createElement('ul');
+        list.className = 'sselect-list';
+        list.setAttribute('role', 'listbox');
+        var empty = document.createElement('div');
+        empty.className = 'sselect-empty';
+        empty.textContent = '일치하는 브랜치 없음';
+        empty.hidden = true;
+        pop.appendChild(input);
+        pop.appendChild(list);
+        pop.appendChild(empty);
+        wrap.appendChild(pop);
+
+        var shown = [];      // 지금 목록에 보이는 option
+        var active = -1;
+
+        function refresh() {
+            var opt = select.options[select.selectedIndex];
+            var placeholder = !opt || opt.value === '';
+            valueEl.textContent = opt ? opt.text : '';
+            valueEl.classList.toggle('is-placeholder', placeholder);
+        }
+
+        function paint(li, text, q) {
+            var at = q ? text.toLowerCase().indexOf(q) : -1;
+            if (at < 0) { li.textContent = text; return; }
+            var mark = document.createElement('mark');
+            mark.textContent = text.substring(at, at + q.length);
+            li.appendChild(document.createTextNode(text.substring(0, at)));
+            li.appendChild(mark);
+            li.appendChild(document.createTextNode(text.substring(at + q.length)));
+        }
+
+        function render() {
+            var q = input.value.trim().toLowerCase();
+            list.textContent = '';
+            shown = Array.prototype.filter.call(select.options, function (o) {
+                return !q || (o.value !== '' && o.text.toLowerCase().indexOf(q) >= 0);
+            });
+            shown.forEach(function (o, i) {
+                var li = document.createElement('li');
+                li.setAttribute('role', 'option');
+                li.dataset.index = i;
+                if (o.value === '') li.classList.add('placeholder-opt');
+                if (o.selected) li.classList.add('selected');
+                paint(li, o.text, q);
+                list.appendChild(li);
+            });
+            empty.hidden = shown.length > 0;
+            var sel = shown.findIndex(function (o) { return o.selected; });
+            setActive(q ? 0 : Math.max(0, sel));
+        }
+
+        function setActive(i) {
+            var items = list.children;
+            if (!items.length) { active = -1; return; }
+            active = Math.max(0, Math.min(i, items.length - 1));
+            Array.prototype.forEach.call(items, function (li, k) { li.classList.toggle('active', k === active); });
+            items[active].scrollIntoView({ block: 'nearest' });
+        }
+
+        function open() {
+            if (!pop.hidden) return;
+            pop.hidden = false;
+            btn.setAttribute('aria-expanded', 'true');
+            input.value = '';
+            render();
+            input.focus();
+        }
+
+        function close(focusBtn) {
+            if (pop.hidden) return;
+            pop.hidden = true;
+            btn.setAttribute('aria-expanded', 'false');
+            if (focusBtn) btn.focus();
+        }
+
+        function pick(i) {
+            var o = shown[i];
+            if (!o) return;
+            var changed = select.value !== o.value;
+            select.value = o.value;
+            refresh();
+            close(true);
+            if (changed) select.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+
+        btn.addEventListener('click', function () { pop.hidden ? open() : close(true); });
+        btn.addEventListener('keydown', function (e) {
+            if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                open();
+            } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+                // 버튼에서 바로 타이핑하면 검색칸으로 이어서 입력
+                e.preventDefault();
+                open();
+                input.value = e.key;
+                render();
+            }
+        });
+        input.addEventListener('input', render);
+        input.addEventListener('keydown', function (e) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); setActive(active + 1); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setActive(active - 1); }
+            else if (e.key === 'Enter') { e.preventDefault(); pick(active); }
+            else if (e.key === 'Escape') { e.preventDefault(); close(true); }
+            else if (e.key === 'Tab') { close(false); }
+        });
+        list.addEventListener('mousedown', function (e) { e.preventDefault(); });   // 검색칸 포커스 유지
+        list.addEventListener('click', function (e) {
+            var li = e.target.closest('li');
+            if (li) pick(Number(li.dataset.index));
+        });
+        list.addEventListener('mousemove', function (e) {
+            var li = e.target.closest('li');
+            if (li && Number(li.dataset.index) !== active) setActive(Number(li.dataset.index));
+        });
+        document.addEventListener('mousedown', function (e) {
+            if (!wrap.contains(e.target)) close(false);
+        });
+
+        select._brRefresh = refresh;
+        refresh();
+    }
+
+    document.querySelectorAll('select[data-searchable]').forEach(enhanceSelect);
+
     // ---------------------------------------------------------------- 비교 화면 A/B 전환
     var swapBtn = el('swapBtn');
     if (swapBtn) {
@@ -340,6 +504,8 @@
             var tmp = a.value;
             a.value = b.value;
             b.value = tmp;
+            if (a._brRefresh) a._brRefresh();
+            if (b._brRefresh) b._brRefresh();
             if (a.value && b.value) {
                 startProgress();
                 a.form.submit();

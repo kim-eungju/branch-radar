@@ -76,8 +76,8 @@
                     <span class="jk-ball" aria-hidden="true"></span>
                     <span class="jk-title">작성 중인 Flyway</span>
                     <span class="jk-chip ms-auto"
-                          th:text="${draft.pinnedVersion != null} ? '일부 커밋됨' : '커밋 전'"
-                          th:title="${draft.pinnedVersion != null} ? '일부 브랜치에 이미 커밋됨 · 남은 브랜치 대기' : '파일명은 커밋 시점에 확정됩니다'">커밋 전</span>
+                          th:text="${draft.locked} ? '일부 커밋됨' : '커밋 전'"
+                          th:title="${draft.locked} ? '일부 브랜치에 이미 커밋됨 · 남은 브랜치 대기' : '파일명은 커밋 시점에 확정됩니다'">커밋 전</span>
                 </div>
                 <div class="jk-body">
                     <div class="jk-build">
@@ -86,24 +86,26 @@
                     </div>
                     <div class="jk-progress" role="presentation"><span></span></div>
                     <ul class="jk-links">
-                        <li><span class="k">마지막 저장</span>
-                            <span class="v"><span th:text="${draft.updatedAt ?: '-'}"></span><span th:if="${draft.worker != ''}" th:text="' · ' + ${draft.worker}"></span><span th:text="' · ' + ${draft.lines} + '줄'"></span></span></li>
-                        <li><span class="k">대상 브랜치</span>
-                            <span class="v" th:text="${draft.branches.isEmpty()} ? '-' : ${#strings.listJoin(draft.branches, ', ')}"></span></li>
+                        <li><span class="k">조각</span>
+                            <span class="v"><span th:text="${draft.active.size()} + '개'"></span><span th:unless="${draft.authors.isEmpty()}" th:text="' · ' + ${#strings.listJoin(draft.authors, ', ')}"></span></span></li>
+                        <li th:with="last=${draft.lastLog}"><span class="k">마지막 변경</span>
+                            <span class="v" th:text="${last != null} ? ${last.at} + ' · ' + ${last.who} + ' ' + ${last.action.label} : '-'"></span></li>
+                        <li th:if="${draft.locked}"><span class="k">남은 브랜치</span>
+                            <span class="v" th:text="${draft.pendingBranches.isEmpty()} ? '-' : ${#strings.listJoin(draft.pendingBranches, ', ')}"></span></li>
                     </ul>
                     <div class="jk-actions">
                         <!-- SQL 은 숨겨둔 pre 에 넣고 공용 SQL 모달로 띄운다 (textContent 로만 옮김) -->
-                        <button type="button" class="jk-btn jk-btn-ghost sql-local" th:unless="${draft.sql == ''}"
+                        <button type="button" class="jk-btn jk-btn-ghost sql-local" th:unless="${draftContent.isEmpty()}"
                                 data-source="draftSqlSource" th:data-file="${draftFileName}"
-                                th:data-meta="'작성 중 · 커밋 전' + (${draft.updatedAt != null} ? ' · ' + ${draft.updatedAt} : '')">
+                                data-meta="작성 중 · 커밋 전 · 조각을 순서대로 합친 내용">
                             <svg th:replace="~{fragments/layout :: icon('search')}"></svg> SQL 보기
                         </button>
                         <a th:href="@{/flyway}" class="jk-btn">
                             <svg viewBox="0 0 24 24" class="ico" aria-hidden="true"><path d="M7 4v16l13-8z" fill="currentColor"/></svg>
-                            이어서 작성
+                            묶음 열기
                         </a>
                     </div>
-                    <pre id="draftSqlSource" hidden th:unless="${draft.sql == ''}" th:text="${draft.sql}"></pre>
+                    <pre id="draftSqlSource" hidden th:unless="${draftContent.isEmpty()}" th:text="${draftContent}"></pre>
                 </div>
             </section>
 
@@ -182,14 +184,14 @@
                                     <span class="v"><span class="mono" th:text="${tags.latest.version ?: '(추출 불가)'}"></span><span class="text-faint" th:text="' · ' + (${tags.latest.annotated} ? 'Annotated' : 'Lightweight')"></span></span></li>
                                 <li><span class="k">Tag 생성일</span>
                                     <span class="v">
-                                        <span th:if="${tags.latest.createdAt != null}" th:text="${#temporals.format(tags.latest.createdAt, 'yyyy-MM-dd HH:mm')}"></span>
+                                        <span th:if="${tags.latest.createdAt != null}" th:text="${#temporals.format(tags.latest.createdAt.atZoneSameInstant(zone), 'yyyy-MM-dd HH:mm')}"></span>
                                         <span th:if="${tags.latest.createdAt == null}" class="text-faint">lightweight · 생성일 없음</span>
                                     </span></li>
                                 <li><span class="k">대상 커밋</span>
                                     <span class="v">
                                         <a class="sha" th:href="${links.commit(view.projectWebUrl, tags.latest.commitSha)}" target="_blank" rel="noopener noreferrer"
                                            th:text="${tags.latest.shortSha()}"></a>
-                                        <span class="text-faint" th:text="${tags.latest.commitDate != null ? ' · ' + #temporals.format(tags.latest.commitDate, 'yyyy-MM-dd HH:mm') : ''}"></span>
+                                        <span class="text-faint" th:text="${tags.latest.commitDate != null ? ' · ' + #temporals.format(tags.latest.commitDate.atZoneSameInstant(zone), 'yyyy-MM-dd HH:mm') : ''}"></span>
                                     </span></li>
                             </ul>
                         </th:block>
@@ -281,7 +283,7 @@
 
                         <!-- 브랜치 -->
                         <td>
-                            <a th:href="${links.branch(view.projectWebUrl, row.branch.name)}" target="_blank" rel="noopener noreferrer"
+                            <a th:href="@{/commits(branch=${row.branch.name})}" title="커밋 내역 보기"
                                class="branch-name" th:text="${row.branch.name}">branch</a>
                             <span th:if="${row.base}" class="chip chip-accent ms-1">기준</span>
                             <div class="sub reason" th:text="${row.branch.commitTitle}" th:title="${row.branch.commitTitle}"></div>

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko" data-bs-theme="dark">
+<head th:replace="~{fragments/layout :: head('커밋 내역')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: topbar('commits', ${projectName}, ${projectWebUrl}, ${projectName != null})}"></header>
+
+<div class="br-shell">
+
+<main class="br-main">
+
+    <div class="br-page-head">
+        <div>
+            <h1>커밋 내역</h1>
+            <div class="sub">브랜치의 커밋 이력을 최신순으로 봅니다. 메시지·작성자·SHA 로 검색할 수 있습니다.</div>
+        </div>
+    </div>
+
+    <div th:if="${error}" class="notice notice-danger">
+        <svg th:replace="~{fragments/layout :: icon('alert')}"></svg>
+        <div>
+            <div class="notice-title">조회 실패</div>
+            <div th:text="${error}"></div>
+        </div>
+    </div>
+
+    <!-- ============================== 브랜치 선택 + 검색 -->
+    <section class="panel" th:if="${branchNames}">
+        <form method="get" th:action="@{/commits}" class="d-flex align-items-end gap-2 flex-wrap p-3">
+            <div>
+                <label for="commitBranch" class="field-label d-block mb-1">브랜치</label>
+                <select id="commitBranch" name="branch" class="form-select" style="min-width: 280px" onchange="this.form.submit()">
+                    <option th:unless="${branchNames.contains(branch)}" th:value="${branch}" th:text="${branch}" selected></option>
+                    <option th:each="n : ${branchNames}" th:value="${n}" th:text="${n}" th:selected="${n == branch}"></option>
+                </select>
+            </div>
+            <div class="flex-grow-1" style="min-width: 240px; max-width: 420px">
+                <label for="commitSearch" class="field-label d-block mb-1">검색</label>
+                <input id="commitSearch" type="search" name="q" class="form-control" th:value="${q}"
+                       placeholder="메시지, 작성자, SHA" autocomplete="off">
+            </div>
+            <button type="submit" class="btn btn-primary">
+                <svg th:replace="~{fragments/layout :: icon('search')}"></svg> 검색
+            </button>
+            <a th:if="${!q.isEmpty()}" th:href="@{/commits(branch=${branch})}" class="btn btn-ghost">검색 해제</a>
+            <span class="flex-grow-1"></span>
+            <a th:href="${links.branch(projectWebUrl, branch)}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost">
+                <svg th:replace="~{fragments/layout :: icon('external')}"></svg> GitLab 에서 열기
+            </a>
+            <a th:href="@{/compare(b=${branch})}" class="btn btn-ghost">
+                <svg th:replace="~{fragments/layout :: icon('compare')}"></svg> 기준 브랜치와 비교
+            </a>
+        </form>
+    </section>
+
+    <!-- ============================== 커밋 목록 (검색 없음, 페이지 단위) -->
+    <section class="panel" th:if="${commits}">
+        <div class="panel-head">
+            <svg th:replace="~{fragments/layout :: icon('commit')}"></svg>
+            <span class="mono" th:text="${branch}"></span>
+            <span class="hint" th:text="${page} + ' 페이지 · 페이지당 ' + ${perPage} + '개'"></span>
+        </div>
+        <div th:replace="~{::commitTable(${commits.items}, '커밋이 없습니다.')}"></div>
+        <div class="d-flex justify-content-between align-items-center p-3" th:if="${page > 1 or commits.hasNext}">
+            <a th:if="${page > 1}" th:href="@{/commits(branch=${branch}, page=${page - 1})}" class="btn btn-ghost btn-sm">← 최신</a>
+            <span th:unless="${page > 1}"></span>
+            <a th:if="${commits.hasNext}" th:href="@{/commits(branch=${branch}, page=${page + 1})}" class="btn btn-ghost btn-sm">이전 커밋 →</a>
+        </div>
+    </section>
+
+    <!-- ============================== 검색 결과 -->
+    <section class="panel" th:if="${search}">
+        <div class="panel-head">
+            <svg th:replace="~{fragments/layout :: icon('search')}"></svg>
+            <span class="mono" th:text="${branch}"></span>
+            <span>에서 "<span th:text="${q}"></span>" 검색</span>
+            <span class="count" th:text="${search.items.size()}"></span>
+            <span class="hint" th:text="'최근 커밋 ' + ${search.scanned} + '개 검색'"></span>
+        </div>
+        <div th:if="${search.truncated}" class="notice notice-info m-3">
+            <svg th:replace="~{fragments/layout :: icon('info')}"></svg>
+            <div th:text="${search.limitReached()}
+                    ? '결과가 많아 최근 ' + ${search.limit()} + '개까지만 표시합니다. 검색어를 더 구체적으로 입력하세요.'
+                    : '조회 상한(max-pages)에 닿아 최근 ' + ${search.scanned} + '개 커밋까지만 검색했습니다. 더 오래된 커밋은 GitLab 에서 확인하세요.'"></div>
+        </div>
+        <div th:replace="~{::commitTable(${search.items}, '검색 결과가 없습니다.')}"></div>
+    </section>
+
+    <!-- ============================== 재사용 조각 -->
+    <th:block th:if="${false}">
+        <div th:fragment="commitTable(items, emptyText)" class="table-wrap">
+            <div th:if="${items.isEmpty()}" class="empty" th:text="${emptyText}"></div>
+            <table th:unless="${items.isEmpty()}" class="br-table">
+                <thead><tr><th>SHA</th><th>메시지</th><th>작성자</th><th>커밋 날짜</th></tr></thead>
+                <tbody>
+                <tr th:each="cm : ${items}">
+                    <td><a th:href="${cm.webUrl ?: links.commit(projectWebUrl, cm.id)}" target="_blank" rel="noopener noreferrer"
+                           class="sha" th:text="${cm.shortId}"></a></td>
+                    <td>
+                        <span th:text="${cm.title}"></span>
+                        <span th:if="${cm.parentIds != null and cm.parentIds.size() > 1}" class="chip ms-1">merge</span>
+                    </td>
+                    <td class="text-nowrap text-muted-2" th:text="${cm.authorName}" th:title="${cm.authorEmail}"></td>
+                    <td class="text-nowrap text-muted-2 mono"
+                        th:text="${cm.committedDate != null ? #temporals.format(cm.committedDate.atZoneSameInstant(zone), 'yyyy-MM-dd HH:mm') : ''}"></td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </th:block>
+</main>
+</div>
+
+<th:block th:replace="~{fragments/layout :: scripts}"></th:block>
+</body>
+</html>

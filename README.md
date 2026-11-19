@@ -5,12 +5,13 @@ GitLab 프로젝트의 여러 브랜치를 한 화면에서 비교하는 사내 
 - 브랜치별 Flyway 마이그레이션 상태 (최신 / 뒤처짐 / 충돌 위험 / 파일 없음 / 조회 불가)
 - 같은 Flyway 버전에서 서로 다른 SQL이 있는지 감지
 - A/B 브랜치 비교 (Flyway + Git 커밋)
+- 브랜치별 커밋 내역 · 메시지/작성자/SHA 검색 (대시보드에서 브랜치명을 클릭하면 이동)
 - SQL 미리보기, GitLab 바로가기
 - 브랜치별 최근 GitLab Tag(패키지 버전)
 - 오랫동안 커밋이 없는 브랜치 표시
-- Flyway 관리: 기준 브랜치의 Flyway 목록, 다음 Flyway를 함께 작성(임시저장)해 여러 브랜치에 커밋
+- Flyway 관리: 기준 브랜치의 Flyway 목록, 작업자별 SQL 조각을 묶음으로 모아(변경 이력 보관) 파일 하나로 여러 브랜치에 커밋
 
-DB, 캐시 서버, 스케줄러를 쓰지 않습니다(로컬 폴더 `flyway-files`에 Flyway 파일과 임시저장만 둡니다). 화면을 열 때마다 GitLab REST API를 호출해 최신 정보를 가져옵니다.
+DB, 캐시 서버, 스케줄러를 쓰지 않습니다(로컬 폴더 `flyway-files`에 Flyway 파일과 묶음 JSON만 둡니다). 화면을 열 때마다 GitLab REST API를 호출해 최신 정보를 가져옵니다.
 **쓰기 작업은 "새 Flyway 파일 1개를 추가하는 커밋"뿐입니다.** Flyway 실행, 기존 파일 수정·삭제, merge, cherry-pick, 브랜치 삭제는 하지 않습니다.
 
 ## 빠른 시작
@@ -33,12 +34,13 @@ DB, 캐시 서버, 스케줄러를 쓰지 않습니다(로컬 폴더 `flyway-fil
 
    ```yaml
    branch-radar:
+     team-name: 개발5팀                       # 상단 바 "Branch Radar 개발5팀 / 프로젝트"
      gitlab:
        base-url: https://gitlab.mycompany.com   # 끝에 / 없이
        project-id: group/my-app                 # 숫자 ID 도 가능
        token: glpat-xxxxxxxxxxxxxxxx
      flyway:
-       workers: [ejkim, ddd, aaa]               # Flyway 커밋 등록자
+       workers: [ejkim, ddd, aaa]               # Flyway 관리 작업자
      branch:
        base: develop
    ```
@@ -78,6 +80,7 @@ jar 안의 `src/main/resources/application.yml`에는 **예시 기본값만** �
 
 | 항목 | 설명 | 기본값 |
 |---|---|---|
+| `branch-radar.team-name` | 상단 바의 "Branch Radar" 바로 옆에 표시할 팀명. 예) `개발5팀`. 비우면 표시하지 않음 | 비어 있음 |
 | `branch-radar.gitlab.base-url` | GitLab 주소 | `https://gitlab.example.com` |
 | `branch-radar.gitlab.project-id` | 숫자 ID 또는 `group/project` 경로 | `123` |
 | `branch-radar.gitlab.token` | GitLab 토큰 (직접 입력) | 비어 있음 |
@@ -86,10 +89,10 @@ jar 안의 `src/main/resources/application.yml`에는 **예시 기본값만** �
 | `branch-radar.flyway.path` | 저장소 기준 마이그레이션 디렉터리 (하위 폴더 포함) | `src/main/resources/db/migration` |
 | `branch-radar.flyway.versioned-prefix` / `repeatable-prefix` / `separator` / `suffixes` | Flyway 파일명 규칙 | `V` / `R` / `__` / `.sql` |
 | `branch-radar.flyway.date-aware-ordering` | 날짜 형식 버전을 날짜 의미로 정렬 | `true` |
-| `branch-radar.flyway.local-dir` | Flyway 파일과 임시저장을 두는 로컬 폴더 (실행 위치 기준) | `flyway-files` |
+| `branch-radar.flyway.local-dir` | Flyway 파일과 묶음(.board.json, history/)을 두는 로컬 폴더 (실행 위치 기준) | `flyway-files` |
 | `branch-radar.flyway.sync-on-startup` | 시작할 때 기준 브랜치의 Flyway 파일을 로컬 폴더로 내려받기 | `true` |
 | `branch-radar.flyway.new-file-description` | Flyway 관리에서 만드는 파일명의 설명 부분 | `VADA` |
-| `branch-radar.flyway.workers` | Flyway 관리에서 고를 수 있는 커밋 등록자 목록. 예) `[ejkim, ddd, aaa]`. 비어 있으면 커밋 불가 | 비어 있음 |
+| `branch-radar.flyway.workers` | Flyway 관리에서 고를 수 있는 작업자 목록. 예) `[ejkim, ddd, aaa]`. 비어 있으면 조각 등록·커밋 불가 | 비어 있음 |
 | `branch-radar.branch.base` | 대시보드 기본 기준 브랜치이자 Flyway 관리의 기준 브랜치 | `develop` |
 | `branch-radar.branch.fetch-concurrency` | 브랜치별 파일 목록을 동시에 조회하는 수 | 6 |
 | `branch-radar.stale-branch.warning-days` | 이 일수 이상 커밋이 없으면 "미갱신" (1 이상) | 30 |
@@ -124,12 +127,13 @@ Bootstrap(WebJar)과 폰트(Pretendard, JetBrains Mono — 둘 다 SIL Open Font
 | `/` | 대시보드. `?base=브랜치`로 기준 브랜치를 바꿉니다. 이 값은 저장되지 않습니다. |
 | `/compare?a=A&b=B` | A/B 비교 — "A 브랜치에 비해 B 브랜치에 없는 항목" |
 | `/api/sql?ref=&path=` | SQL 미리보기용 JSON. 마이그레이션 디렉터리 안의 SQL 파일만 허용합니다. |
-| `/flyway` | Flyway 관리. 기준 브랜치의 Flyway 목록과 작성 중인 Flyway |
-| `/api/flyway/draft`, `/api/flyway/validate`, `/api/flyway/commit` | 관리 화면이 쓰는 JSON API (임시저장 / 검증 / 커밋) |
+| `/flyway` | Flyway 관리. 기준 브랜치의 Flyway 목록과 이번 묶음 |
+| `/flyway/history/{이름}` | 커밋을 마친 지난 묶음 (읽기 전용) |
+| `/api/flyway/posts…`, `/api/flyway/validate`, `/api/flyway/commit`, `/api/flyway/close` | 관리 화면이 쓰는 JSON API (조각 등록·수정·삭제·복구·순서 / 검증 / 커밋 / 마감) |
 
 ## Flyway 관리
 
-`/flyway` 화면 하나에서 기준 브랜치(`branch.base`, 기본 `develop`)의 Flyway 목록을 보고, 다음에 추가할 Flyway를 작성해 커밋합니다.
+`/flyway` 화면 하나에서 기준 브랜치(`branch.base`, 기본 `develop`)의 Flyway 목록을 보고, 다음 Flyway에 넣을 SQL을 조각으로 모아 묶음 하나(파일 하나)로 커밋합니다.
 
 ### 목록
 
@@ -138,38 +142,61 @@ Bootstrap(WebJar)과 폰트(Pretendard, JetBrains Mono — 둘 다 SIL Open Font
   **이미 있는 파일은 건너뜁니다**(덮어쓰지 않음). 백그라운드로 실행하므로 GitLab이 느려도 시작은 막지 않고, 결과는 화면 맨 아래와 로그에 나옵니다.
   끄려면 `flyway.sync-on-startup: false`.
 
-### 작성 중인 Flyway (임시저장)
+### 이번 묶음
 
-- **모든 작업자가 함께 이어 쓰는 한 개**입니다. `임시저장`을 누르면 서버의 `flyway-files/.draft.json`에 저장되고, 대시보드 맨 위에 "작성 중인 Flyway"로 표시됩니다.
-- 다른 사람이 먼저 저장한 뒤에 예전 화면에서 저장하거나 커밋하려 하면 거부합니다(409). 남의 내용을 모르고 덮어쓰거나 빼고 커밋하는 일을 막기 위해서입니다. 새로고침해서 최신 내용에 이어 쓰면 됩니다.
-- SQL과 설명을 모두 비우고 임시저장하면 임시저장이 지워집니다.
+- 화면 오른쪽 위에서 **나(작업자)** 를 고릅니다(`flyway.workers` 목록, 브라우저에 기억). 모든 기록에 이 이름이 남습니다.
+- 작업자마다 **SQL 한 건 = 조각 하나**로 등록합니다. **설명은 필수**입니다(커밋 파일에 주석으로 들어갑니다).
+- 조각은 누구나 수정·삭제·복구·순서 변경할 수 있고, **모든 변경이 "변경 이력"에 남습니다**(누가, 언제, 무엇을). 수정·삭제 직전의 내용도 이력에서 볼 수 있습니다.
+- **삭제해도 지워지지 않습니다.** "삭제된 조각"에 내용이 남고 복구할 수 있습니다(복구하면 맨 아래로).
+- 조각의 순서가 파일 안의 **실행 순서**입니다. ▲▼로 바꿉니다. `;` 로 끝나지 않는 조각은 표시하고, 커밋 검증에서 경고합니다.
+- 다른 사람이 먼저 바꾼 조각을 예전 화면에서 고치거나, 묶음이 바뀐 뒤 예전 화면에서 커밋하려 하면 거부합니다(409).
+- 묶음은 서버의 `flyway-files/.board.json` 한 파일(JSON)에 저장되고, 대시보드 맨 위에 "작성 중인 Flyway"로 표시됩니다.
+  예전 임시저장(`.draft.json`)이 남아 있으면 처음 열 때 조각 하나로 옮깁니다.
 
 ### 커밋
 
-- **등록자**를 반드시 골라야 합니다. 고를 수 있는 사람은 `flyway.workers` 설정의 목록이고, 목록이 비어 있으면 커밋할 수 없습니다. 설명은 선택입니다.
+- 남아 있는 조각을 순서대로 합쳐 파일 하나를 만듭니다. 조각마다 등록자·설명 주석이 붙습니다.
+
+  ```sql
+  -- ============================================================
+  -- [1/2] 등록자 : ejkim | 등록 : 2026-11-19 09:12
+  -- 설명 : 주문 테이블 컬럼 추가
+  -- ============================================================
+  ALTER TABLE orders ADD memo TEXT;
+
+  -- ============================================================
+  -- [2/2] 등록자 : ddd | 등록 : 2026-11-19 10:30 | 수정 : ejkim 2026-11-19 11:02
+  -- 설명 : 코드 데이터 추가
+  -- ============================================================
+  INSERT INTO code ...;
+  ```
+
 - **파일명은 자동**입니다: `V{오늘 yyMMdd}.{순번 3자리}__VADA.sql`. 순번은 전체 브랜치에서 오늘 날짜로 쓰인 최대 순번 + 1이고, 날짜는 `stale-branch.timezone` 기준입니다. `VADA` 부분은 `flyway.new-file-description`으로 바꿀 수 있습니다.
   저장 위치는 기준 브랜치의 최신 Flyway가 있는 폴더입니다.
-- **커밋 메시지 양식**(고정):
+- **커밋 메시지 양식**(고정). 조각이 하나면 `설명 : …` 한 줄입니다.
 
   ```
-  🐦 V261102.001__VADA.sql
+  🐦 V261119.001__VADA.sql
 
-  등록자 : {등록자}
-  설명 : {설명}
+  등록자 : ejkim, ddd
+  커밋 : {커밋한 사람}
+  설명 :
+  - 주문 테이블 컬럼 추가 (ejkim)
+  - 코드 데이터 추가 (ddd)
   ```
 
-- **브랜치를 여러 개** 고를 수 있습니다. 같은 파일을 브랜치마다 커밋합니다(GitLab Commits API `action=create`, MR 없음). 임시저장에 고른 브랜치가 없으면 기준 브랜치만 선택되어 있습니다.
+- **브랜치를 여러 개** 고를 수 있습니다. 같은 파일을 브랜치마다 커밋합니다(GitLab Commits API `action=create`, MR 없음). 기본은 기준 브랜치만 선택되어 있습니다.
 - 커밋 전에 검증 결과를 확인하는 창이 뜹니다. **하나라도 오류가 있으면 어느 브랜치에도 커밋하지 않습니다.**
-  - 오류: 등록자 미선택, SQL 없음 또는 1MB 초과, 브랜치 미선택, 브랜치에 같은 버전·같은 경로의 파일이 이미 있음, 브랜치 조회 실패.
-  - 경고: 보호 브랜치, 브랜치 최신보다 낮은 버전, 다른 브랜치에 같은 버전의 다른 파일이 있음.
-- 커밋한 파일은 로컬 폴더에도 같은 경로로 저장하고, 모든 브랜치에 성공하면 임시저장을 지웁니다.
-- 일부 브랜치만 GitLab이 거부하면(권한 등), 성공한 브랜치는 그대로 두고 **실패한 브랜치와 그때의 버전을 임시저장에 남깁니다.** 원인을 해결하고 다시 커밋하면 같은 파일명으로 올라갑니다.
-- SQL은 UTF-8, 줄바꿈 LF로 저장하고 파일 끝에 줄바꿈을 붙입니다. 기존 파일은 덮어쓰지 않습니다(같은 경로면 GitLab이 거부).
+  - 오류: 작업자 미선택, 조각 없음 또는 1MB 초과, 브랜치 미선택, 브랜치에 같은 버전·같은 경로의 파일이 이미 있음, 브랜치 조회 실패.
+  - 경고: `;` 로 끝나지 않는 조각, 보호 브랜치, 브랜치 최신보다 낮은 버전, 다른 브랜치에 같은 버전의 다른 파일이 있음.
+- 커밋한 파일은 로컬 폴더에도 같은 경로로 저장합니다. 모든 브랜치에 성공하면 묶음(조각·삭제된 조각·변경 이력)을 `flyway-files/history/{파일명}.json`에 **보관**하고 비웁니다. 보관한 묶음은 화면의 "지난 묶음"에서 볼 수 있습니다.
+- 일부 브랜치만 GitLab이 거부하면(권한 등), 성공한 브랜치는 그대로 두고 **버전과 파일 내용을 고정하고 조각 수정을 잠급니다**(남은 브랜치에도 똑같은 파일이 올라가야 하므로). 원인을 해결하고 남은 브랜치에 다시 커밋하거나, **마감**해서 남은 브랜치 없이 보관할 수 있습니다.
+- SQL은 UTF-8, 줄바꿈 LF로 저장합니다. 기존 파일은 덮어쓰지 않습니다(같은 경로면 GitLab이 거부).
 
 ### 주의
 
-- **이 도구에는 로그인이 없습니다.** 화면에 접속할 수 있는 사람은 누구나 토큰 계정의 권한으로 커밋할 수 있고, 등록자는 본인 확인 없이 고르는 값입니다. 접근 가능한 네트워크 범위를 제한해서 운영하세요.
-- 커밋의 작성자(author)와 커미터는 토큰 계정이고, 등록자는 커밋 메시지에만 남습니다.
+- **이 도구에는 로그인이 없습니다.** 화면에 접속할 수 있는 사람은 누구나 토큰 계정의 권한으로 커밋할 수 있고, 작업자는 본인 확인 없이 고르는 값입니다. 변경 이력은 "누가 그 이름을 골랐는지"를 남기는 기록입니다. 접근 가능한 네트워크 범위를 제한해서 운영하세요.
+- 커밋의 작성자(author)와 커미터는 토큰 계정이고, 등록자·커밋한 사람은 커밋 메시지와 파일 주석에만 남습니다.
 - 쓰기 API는 `application/json` 본문만 받으므로, 다른 웹사이트가 사용자 브라우저를 이용해 몰래 커밋을 일으킬 수 없습니다.
 - 이 도구 밖에서(로컬 push 등) 같은 날 같은 순번을 올리는 경우까지는 막지 못합니다. 커밋 직전에 브랜치를 다시 조회해 줄일 뿐입니다.
 - 커밋하면 저장소 설정에 따라 CI가 바로 실행될 수 있습니다. 한 번 DB에 적용된 Flyway 파일은 고칠 수 없으니 확인 창의 내용을 꼭 읽어 보세요.
@@ -246,8 +273,9 @@ config/GitLabProperties      설정 (branch-radar.*), 시작 시 검증
 client/GitLabClient          GitLab REST API (페이지네이션, URL 인코딩, 오류 → GitLabException)
 client/GitLabLinks           GitLab 웹 링크 생성
 service/FlywayService        파일명 해석, 대시보드 분석, A/B Flyway 비교, checksum
-service/FlywayCommitService  Flyway 관리: 임시저장, 파일명 자동 지정, 검증, 여러 브랜치 커밋
-service/FlywayLocalStore     로컬 폴더 입출력 (Flyway 파일, 임시저장)
+service/FlywayCommitService  Flyway 관리: 묶음(조각·이력), 파일 합치기, 파일명 자동 지정, 검증, 여러 브랜치 커밋, 보관
+service/FlywayLocalStore     로컬 폴더 입출력 (Flyway 파일, 묶음, 보관)
+service/FlywayBoard          묶음 JSON 모델 (조각, 변경 이력, 보관)
 service/FlywayLocalSync      시작 시 기준 브랜치 Flyway 를 로컬 폴더로 내려받기
 service/BranchService        대시보드 조립 (브랜치 → 스냅샷 → 분석)
 service/CompareService       A/B 비교 (Flyway + 커밋)
@@ -265,5 +293,5 @@ controller/*                 Dashboard, Compare, SQL API, Flyway 관리
 - `CompareServiceTest`: Compare API 방향(`from=B&to=A`), API 실패 처리, cherry-pick 힌트
 - `TagServiceTest`: 버전 정렬, annotated/lightweight 구분, 조상 커밋 판정, "확인 불가" 처리
 - `BranchActivityServiceTest`: 0/29/30/59/60/150일 경계, null, 미래 날짜, 타임존 날짜 경계, 잘못된 설정
-- `FlywayCommitServiceTest`: 파일명 자동 지정, 커밋 메시지 양식, 임시저장 충돌(revision), 여러 브랜치 커밋과 로컬 저장, 일부 실패 시 버전 고정, 시작 시 로컬 동기화
-- `WebIntegrationTest`: 가짜 GitLab 서버에 연결해 대시보드·비교·SQL API·Flyway 관리 화면과 임시저장/검증/커밋 API를 확인
+- `FlywayCommitServiceTest`: 파일명 자동 지정, 합친 파일·커밋 메시지 양식, 조각 등록·수정·삭제·복구·순서와 변경 이력, 충돌(revision), 여러 브랜치 커밋·로컬 저장·보관, 일부 실패 시 잠금과 마감, 예전 임시저장 옮기기, 시작 시 로컬 동기화
+- `WebIntegrationTest`: 가짜 GitLab 서버에 연결해 대시보드·비교·SQL API·이번 묶음 화면과 조각/검증/커밋 API, 지난 묶음 화면을 확인

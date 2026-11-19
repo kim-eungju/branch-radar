@@ -10,7 +10,9 @@ import com.branchradar.service.BranchService;
 import com.branchradar.service.FlywayCommitService;
 import com.branchradar.service.FlywayCommitService.DraftConflictException;
 import com.branchradar.service.FlywayCommitService.InvalidDraftException;
-import com.branchradar.service.FlywayCommitService.Request;
+import com.branchradar.service.FlywayCommitService.CommitRequest;
+import com.branchradar.service.FlywayCommitService.PostRequest;
+import com.branchradar.service.FlywayBoard;
 import com.branchradar.service.FlywayLocalStore;
 import com.branchradar.service.FlywayLocalSync;
 import com.branchradar.service.FlywayService;
@@ -21,6 +23,7 @@ import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.ResponseBody;
@@ -32,7 +35,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Flyway 관리 화면(기준 브랜치의 Flyway 목록 + 작성 중인 Flyway)과 임시저장/검증/커밋 API.
+ * Flyway 관리 화면(기준 브랜치의 Flyway 목록 + 이번 묶음)과 묶음/검증/커밋 API.
  * <p>
  * 쓰기 API 는 application/json 본문만 받는다. 브라우저는 다른 사이트의 form 으로 JSON 본문을 보낼 수 없고
  * (CORS 사전 요청에서 막힘), 이 앱은 CORS 를 허용하지 않으므로 다른 사이트가 사용자 몰래 커밋을 일으키지 못한다.
@@ -69,7 +72,10 @@ public class FlywayManageController {
         model.addAttribute("workers", commitService.workers());
         model.addAttribute("localDir", store.root().toString());
         model.addAttribute("sync", localSync.last());
-        model.addAttribute("draft", commitService.draft());
+        FlywayBoard board = commitService.board();
+        model.addAttribute("board", board);
+        model.addAttribute("boardContent", commitService.content(board));
+        model.addAttribute("archives", commitService.archives());
         try {
             GitLabClient.Project project = client.getProject();
             model.addAttribute("projectName", project.name());
@@ -130,28 +136,87 @@ public class FlywayManageController {
         return new BranchGroup(key, label, color, hint, names);
     }
 
-    @GetMapping("/api/flyway/draft")
-    @ResponseBody
-    public FlywayCommitService.DraftView draft() {
-        return commitService.draft();
+    // ---------------------------------------------------------------- 지난 묶음 (보관)
+
+    @GetMapping("/flyway/history/{name}")
+    public String history(@PathVariable String name, Model model) {
+        model.addAttribute("tokenConfigured", properties.gitlab().hasToken());
+        model.addAttribute("archives", commitService.archives());
+        model.addAttribute("name", name);
+        FlywayBoard.Archive archive = commitService.archive(name);
+        if (archive == null) {
+            model.addAttribute("error", "보관된 묶음 '" + name + "' 을(를) 찾을 수 없습니다.");
+        } else {
+            model.addAttribute("archive", archive);
+        }
+        return "flyway-history";
     }
 
-    @PostMapping(value = "/api/flyway/draft", consumes = MediaType.APPLICATION_JSON_VALUE)
+    // ---------------------------------------------------------------- 묶음 API (응답 후 화면은 새로 불러온다)
+
+    @GetMapping("/api/flyway/board")
     @ResponseBody
-    public FlywayCommitService.DraftView saveDraft(@RequestBody Request request) {
-        return commitService.saveDraft(request);
+    public FlywayBoard board() {
+        return commitService.board();
+    }
+
+    @PostMapping(value = "/api/flyway/posts", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public Map<String, Object> createPost(@RequestBody PostRequest request) {
+        return saved(commitService.createPost(request));
+    }
+
+    @PostMapping(value = "/api/flyway/posts/{id}/update", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public Map<String, Object> updatePost(@PathVariable long id, @RequestBody PostRequest request) {
+        return saved(commitService.updatePost(id, request));
+    }
+
+    @PostMapping(value = "/api/flyway/posts/{id}/delete", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public Map<String, Object> deletePost(@PathVariable long id, @RequestBody PostRequest request) {
+        return saved(commitService.deletePost(id, request));
+    }
+
+    @PostMapping(value = "/api/flyway/posts/{id}/restore", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public Map<String, Object> restorePost(@PathVariable long id, @RequestBody PostRequest request) {
+        return saved(commitService.restorePost(id, request));
+    }
+
+    @PostMapping(value = "/api/flyway/posts/{id}/up", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public Map<String, Object> moveUp(@PathVariable long id, @RequestBody PostRequest request) {
+        return saved(commitService.movePost(id, true, request));
+    }
+
+    @PostMapping(value = "/api/flyway/posts/{id}/down", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public Map<String, Object> moveDown(@PathVariable long id, @RequestBody PostRequest request) {
+        return saved(commitService.movePost(id, false, request));
+    }
+
+    private static Map<String, Object> saved(FlywayBoard board) {
+        return Map.of("revision", board.revision, "posts", board.getActive().size());
     }
 
     @PostMapping(value = "/api/flyway/validate", consumes = MediaType.APPLICATION_JSON_VALUE)
     @ResponseBody
-    public FlywayCommitService.Plan validate(@RequestBody Request request) {
+    public FlywayCommitService.Plan validate(@RequestBody CommitRequest request) {
         return commitService.plan(request);
     }
 
     @PostMapping(value = "/api/flyway/commit", consumes = MediaType.APPLICATION_JSON_VALUE)
     @ResponseBody
-    public FlywayCommitService.Committed commit(@RequestBody Request request) {
+    public FlywayCommitService.Committed commit(@RequestBody CommitRequest request) {
         return commitService.commit(request);
+    }
+
+    /** 일부 브랜치에만 커밋된 묶음을 남은 브랜치 없이 끝낸다. */
+    @PostMapping(value = "/api/flyway/close", consumes = MediaType.APPLICATION_JSON_VALUE)
+    @ResponseBody
+    public Map<String, Object> close(@RequestBody CommitRequest request) {
+        return Map.of("archive", commitService.close(request));
     }
 
     /** 검증 오류: 어느 브랜치에도 커밋하지 않았음을 422 와 함께 검증 결과로 알린다. */
@@ -161,11 +226,11 @@ public class FlywayManageController {
                 .body(Map.of("error", e.getMessage(), "plan", e.getPlan()));
     }
 
-    /** 다른 사람이 먼저 저장했거나 이미 커밋됨: 저장/커밋하지 않고 409 로 알린다. */
+    /** 다른 사람이 먼저 바꿨거나 이미 커밋됨: 저장/커밋하지 않고 409 로 알린다. */
     @ExceptionHandler(DraftConflictException.class)
     public ResponseEntity<Map<String, Object>> conflict(DraftConflictException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(Map.of("error", e.getMessage(), "draft", e.getCurrent()));
+                .body(Map.of("error", e.getMessage()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

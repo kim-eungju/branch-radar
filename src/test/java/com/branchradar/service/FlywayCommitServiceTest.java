@@ -6,7 +6,8 @@ import com.branchradar.dto.FlywayVersion;
 import com.branchradar.service.FlywayCommitService.DraftConflictException;
 import com.branchradar.service.FlywayCommitService.InvalidDraftException;
 import com.branchradar.service.FlywayCommitService.Plan;
-import com.branchradar.service.FlywayCommitService.Request;
+import com.branchradar.service.FlywayCommitService.CommitRequest;
+import com.branchradar.service.FlywayCommitService.PostRequest;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -108,8 +109,20 @@ class FlywayCommitServiceTest {
         return sb.append(']').toString();
     }
 
-    private static Request request(String sql, String worker, String... branches) {
-        return new Request(sql, "사용자 테이블 추가", worker, List.of(branches), 0L);
+    private static PostRequest post(String actor, String description, String sql) {
+        return new PostRequest(actor, description, sql, null);
+    }
+
+    private static PostRequest as(String actor, long revision) {
+        return new PostRequest(actor, null, null, revision);
+    }
+
+    private CommitRequest commitBy(String actor, String... branches) {
+        return new CommitRequest(actor, List.of(branches), service.board().revision);
+    }
+
+    private long rev(long id) {
+        return service.board().posts.stream().filter(p -> p.id == id).findFirst().orElseThrow().revision;
     }
 
     private void expectCommit(String branch, String sha) {
@@ -120,7 +133,7 @@ class FlywayCommitServiceTest {
                         .body("{\"id\":\"" + sha + "\",\"short_id\":\"" + sha.substring(0, 8) + "\"}"));
     }
 
-    // ------------------------------------------------------------------ 파일명
+    // ------------------------------------------------------------------ 파일명 · 파일 내용 · 메시지
 
     @Test
     void 파일명은_오늘_날짜와_전체_브랜치_기준_다음_순번() {
@@ -132,12 +145,38 @@ class FlywayCommitServiceTest {
     }
 
     @Test
-    void 커밋_메시지_양식() {
-        assertThat(FlywayCommitService.commitMessage("V261102.001__VADA.sql", "jwhan", "컬럼 추가"))
-                .isEqualTo(BIRD + "V261102.001__VADA.sql\n\n등록자 : jwhan\n설명 : 컬럼 추가");
-        // 설명은 선택
-        assertThat(FlywayCommitService.commitMessage("V261102.001__VADA.sql", "ejkim", ""))
-                .isEqualTo(BIRD + "V261102.001__VADA.sql\n\n등록자 : ejkim\n설명 :");
+    void 조각을_순서대로_합치고_등록자와_설명을_주석으로_넣는다() {
+        service.createPost(post("ejkim", "주문 테이블 컬럼 추가", "ALTER TABLE orders ADD memo TEXT;\r\n\r\n"));
+        service.createPost(post("jwhan", "코드 데이터\n두 번째 줄", "INSERT INTO code VALUES (1);"));
+        service.updatePost(2, new PostRequest("jwsung", "코드 데이터\n두 번째 줄", "INSERT INTO code VALUES (2);", rev(2)));
+
+        assertThat(service.content(service.board())).isEqualTo("""
+                -- ============================================================
+                -- [1/2] 등록자 : ejkim | 등록 : 2026-11-12 09:30
+                -- 설명 : 주문 테이블 컬럼 추가
+                -- ============================================================
+                ALTER TABLE orders ADD memo TEXT;
+
+                -- ============================================================
+                -- [2/2] 등록자 : jwhan | 등록 : 2026-11-12 09:30 | 수정 : jwsung 2026-11-12 09:30
+                -- 설명 : 코드 데이터
+                --        두 번째 줄
+                -- ============================================================
+                INSERT INTO code VALUES (2);
+                """);
+    }
+
+    @Test
+    void 커밋_메시지에_등록자_전원과_커밋한_사람과_조각별_설명이_들어간다() {
+        service.createPost(post("ejkim", "컬럼 추가", "SELECT 1;"));
+        assertThat(FlywayCommitService.commitMessage("V261102.001__VADA.sql", "jwhan", service.board().getActive()))
+                .isEqualTo(BIRD + "V261102.001__VADA.sql\n\n등록자 : ejkim\n커밋 : jwhan\n설명 : 컬럼 추가");
+
+        service.createPost(post("jwhan", "코드 추가\n자세한 내용", "SELECT 2;"));
+        service.createPost(post("ejkim", "인덱스", "SELECT 3;"));
+        assertThat(FlywayCommitService.commitMessage("V261102.001__VADA.sql", "jwhan", service.board().getActive()))
+                .isEqualTo(BIRD + "V261102.001__VADA.sql\n\n등록자 : ejkim, jwhan\n커밋 : jwhan\n설명 :\n"
+                        + "- 컬럼 추가 (ejkim)\n- 코드 추가 (jwhan)\n- 인덱스 (ejkim)");
     }
 
     @Test
@@ -147,126 +186,233 @@ class FlywayCommitServiceTest {
                 .isEqualTo("ce013625030ba8dba906f756967f9e9ca394464a");
     }
 
+    // ------------------------------------------------------------------ 묶음
+
+    @Test
+    void 조각은_누구나_고치고_지울_수_있고_모든_변경이_이력에_남는다() {
+        service.createPost(post("ejkim", "A", "SELECT 'a';"));
+        service.createPost(post("jwhan", "B", "SELECT 'b';"));
+        service.createPost(post("jwsung", "C", "SELECT 'c';"));
+
+        service.updatePost(1, new PostRequest("jwhan", "A2", "SELECT 'a2';", rev(1)));
+        service.deletePost(2, as("jwsung", rev(2)));
+        service.movePost(3, true, as("ejkim", 0));          // 남은 조각 사이에서 C 를 A 위로
+
+        FlywayBoard board = service.board();
+        assertThat(board.getActive()).extracting(p -> p.description).containsExactly("C", "A2");
+        assertThat(board.getDeleted()).singleElement().satisfies(p -> {
+            assertThat(p.sql).isEqualTo("SELECT 'b';");     // 삭제해도 내용은 남는다
+            assertThat(p.deletedBy).isEqualTo("jwsung");
+        });
+        assertThat(board.getAuthors()).containsExactly("jwsung", "ejkim");
+        assertThat(board.log).extracting(e -> e.who + " " + e.action.getLabel() + " #" + e.postId).containsExactly(
+                "ejkim 등록 #1", "jwhan 등록 #2", "jwsung 등록 #3", "jwhan 수정 #1", "jwsung 삭제 #2", "ejkim 순서 변경 #3");
+        // 수정·삭제 전 내용이 이력에 남는다
+        assertThat(board.log.get(3).beforeSql).isEqualTo("SELECT 'a';");
+        assertThat(board.log.get(3).detail).contains("작성 ejkim");
+        assertThat(board.log.get(4).beforeSql).isEqualTo("SELECT 'b';");
+
+        // 복구하면 맨 아래로
+        service.restorePost(2, as("ejkim", 0));
+        assertThat(service.board().getActive()).extracting(p -> p.description).containsExactly("C", "A2", "B");
+        assertThat(service.board().getLastLog().action).isEqualTo(FlywayBoard.Action.RESTORE);
+    }
+
+    @Test
+    void 조각_수정은_revision_으로_다른_사람의_변경을_덮어쓰지_않게_한다() {
+        service.createPost(post("ejkim", "A", "SELECT 1;"));
+        long seen = rev(1);
+        service.updatePost(1, new PostRequest("jwhan", "A", "SELECT 2;", seen));
+
+        assertThatThrownBy(() -> service.updatePost(1, new PostRequest("jwsung", "A", "SELECT 3;", seen)))
+                .isInstanceOf(DraftConflictException.class).hasMessageContaining("jwhan");
+        assertThatThrownBy(() -> service.deletePost(1, as("jwsung", seen)))
+                .isInstanceOf(DraftConflictException.class);
+        assertThat(service.board().getActive().get(0).sql).isEqualTo("SELECT 2;");
+    }
+
+    @Test
+    void 작업자_설명_SQL은_필수() {
+        assertThatThrownBy(() -> service.createPost(post("someone", "A", "SELECT 1;")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("작업자");
+        assertThatThrownBy(() -> service.createPost(post("ejkim", " ", "SELECT 1;")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("설명");
+        assertThatThrownBy(() -> service.createPost(post("ejkim", "A", "  \n")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("SQL");
+        assertThat(store.readBoard()).isNull();
+    }
+
+    @Test
+    void 이전_임시저장은_조각_하나로_옮긴다() throws Exception {
+        Files.writeString(dir.resolve(".draft.json"), "{\"sql\":\"SELECT 'old';\",\"description\":\"예전 작업\","
+                + "\"worker\":\"jwhan\",\"branches\":[\"develop\"],\"revision\":5,\"updatedAt\":\"2026-11-11 18:00\"}");
+
+        FlywayBoard board = service.board();
+
+        assertThat(board.getActive()).singleElement().satisfies(p -> {
+            assertThat(p.author).isEqualTo("jwhan");
+            assertThat(p.description).isEqualTo("예전 작업");
+            assertThat(p.sql).isEqualTo("SELECT 'old';");
+            assertThat(p.createdAt).isEqualTo("2026-11-11 18:00");
+        });
+        assertThat(board.log).singleElement().satisfies(e -> assertThat(e.action).isEqualTo(FlywayBoard.Action.MIGRATE));
+        assertThat(dir.resolve(".draft.json")).doesNotExist();
+        assertThat(dir.resolve(".board.json")).exists();
+    }
+
     // ------------------------------------------------------------------ 검증
 
     @Test
     void 파일명과_경로는_자동으로_정해지고_기준_브랜치의_최신_파일과_같은_폴더에_둔다() {
-        Plan plan = service.plan(request("SELECT 1;\r\nSELECT 2;", "jwhan", "develop", "release"));
+        service.createPost(post("ejkim", "사용자 테이블 추가", "SELECT 1;\r\nSELECT 2;"));
+        Plan plan = service.plan(commitBy("jwhan", "develop", "release"));
 
         assertThat(plan.ok()).isTrue();
         assertThat(plan.fileName()).isEqualTo(NEXT);          // hotfix 의 .002 다음
         assertThat(plan.filePath()).isEqualTo(NEXT_PATH);
-        assertThat(plan.commitMessage()).isEqualTo(BIRD + "" + NEXT + "\n\n등록자 : jwhan\n설명 : 사용자 테이블 추가");
-        assertThat(plan.sqlLines()).isEqualTo(2);
+        assertThat(plan.commitMessage()).isEqualTo(BIRD + NEXT + "\n\n등록자 : ejkim\n커밋 : jwhan\n설명 : 사용자 테이블 추가");
+        assertThat(plan.posts()).isEqualTo(1);
+        assertThat(plan.sqlLines()).isEqualTo(6);              // 주석 4줄 + SQL 2줄
+        assertThat(plan.content()).endsWith("SELECT 1;\nSELECT 2;\n");
         assertThat(plan.branches()).extracting(b -> b.branch()).containsExactly("develop", "release");
         assertThat(plan.branches().get(0).warnings()).anyMatch(w -> w.contains("보호 브랜치"));
         assertThat(plan.branches().get(1).warnings()).isEmpty();
     }
 
     @Test
-    void 등록자와_브랜치와_SQL은_필수이고_등록자는_정해진_사람만() {
-        Plan plan = service.plan(new Request(" ", null, "someone", List.of(), 0L));
+    void 작업자와_브랜치와_조각은_필수() {
+        Plan plan = service.plan(new CommitRequest("someone", List.of(), 0L));
         assertThat(plan.ok()).isFalse();
         assertThat(plan.errors()).hasSize(3)
-                .anyMatch(e -> e.contains("등록자"))
-                .anyMatch(e -> e.contains("SQL"))
+                .anyMatch(e -> e.contains("작업자"))
+                .anyMatch(e -> e.contains("조각이 없습니다"))
                 .anyMatch(e -> e.contains("브랜치"));
         assertThat(service.workers()).containsExactly("jwsung", "ejkim", "jwhan", "chwonhan00");
     }
 
     @Test
-    void 없는_브랜치가_섞여_있으면_전체가_커밋_불가() {
-        Plan plan = service.plan(request("SELECT 1;", "ejkim", "develop", "no-such"));
-        assertThat(plan.ok()).isFalse();
-        assertThat(plan.branches().get(1).errors()).anyMatch(e -> e.contains("찾을 수 없습니다"));
+    void 세미콜론으로_끝나지_않는_조각은_경고() {
+        service.createPost(post("ejkim", "A", "SELECT 1 -- 끝에 ; 없음"));
+        service.createPost(post("jwhan", "B", "SELECT 2; -- 주석"));
+        Plan plan = service.plan(commitBy("ejkim", "release"));
+        assertThat(plan.ok()).isTrue();
+        assertThat(plan.warnings()).singleElement().satisfies(w -> assertThat(w).contains("#1", "ejkim", ";"));
     }
 
-    // ------------------------------------------------------------------ 임시저장
-
     @Test
-    void 임시저장은_revision_으로_다른_사람의_저장을_덮어쓰지_않게_한다() {
-        var first = service.saveDraft(new Request("SELECT 1;", "메모", "jwsung", List.of("develop"), 0L));
-        assertThat(first.exists()).isTrue();
-        assertThat(first.revision()).isPositive();
-        assertThat(first.updatedAt()).isEqualTo("2026-11-12 09:30");
-        assertThat(service.draft().sql()).isEqualTo("SELECT 1;");
-
-        // 다른 화면이 예전 revision(0) 으로 저장/커밋하려 하면 거부
-        assertThatThrownBy(() -> service.saveDraft(new Request("SELECT 9;", "", "ejkim", List.of(), 0L)))
-                .isInstanceOf(DraftConflictException.class).hasMessageContaining("jwsung");
-        assertThatThrownBy(() -> service.commit(request("SELECT 9;", "ejkim", "develop")))
-                .isInstanceOf(DraftConflictException.class);
-
-        // 최신 revision 으로 이어서 저장
-        var second = service.saveDraft(new Request("SELECT 1;\nSELECT 2;", "메모", "ejkim", List.of("develop"), first.revision()));
-        assertThat(second.revision()).isGreaterThan(first.revision());
-        assertThat(second.lines()).isEqualTo(2);
-
-        // 내용을 모두 지우고 저장하면 임시저장이 없어진다
-        assertThat(service.saveDraft(new Request("", "", "", List.of(), second.revision())).exists()).isFalse();
-        assertThat(store.readDraft()).isNull();
+    void 없는_브랜치가_섞여_있으면_전체가_커밋_불가() {
+        service.createPost(post("ejkim", "A", "SELECT 1;"));
+        Plan plan = service.plan(commitBy("ejkim", "develop", "no-such"));
+        assertThat(plan.ok()).isFalse();
+        assertThat(plan.branches().get(1).errors()).anyMatch(e -> e.contains("찾을 수 없습니다"));
     }
 
     // ------------------------------------------------------------------ 커밋
 
     @Test
-    void 여러_브랜치에_같은_파일을_커밋하고_로컬에도_저장하고_임시저장을_지운다() throws Exception {
-        var saved = service.saveDraft(new Request("CREATE TABLE users (id INT);", "사용자 테이블 추가", "jwhan",
-                List.of("develop", "release"), 0L));
+    void 여러_브랜치에_합친_파일을_커밋하고_로컬에_저장하고_묶음을_보관한_뒤_비운다() throws Exception {
+        service.createPost(post("ejkim", "사용자 테이블 추가", "CREATE TABLE users (id INT);"));
+        service.createPost(post("jwhan", "인덱스", "CREATE INDEX ix ON users (id);"));
+        service.deletePost(2, as("jwsung", rev(2)));
+        String content = service.content(service.board());
+
         server.expect(once(), requestTo(PROJECT + "/repository/commits"))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(header("PRIVATE-TOKEN", "test-token"))
                 .andExpect(jsonPath("$.branch").value("develop"))
-                .andExpect(jsonPath("$.commit_message").value(BIRD + "" + NEXT + "\n\n등록자 : jwhan\n설명 : 사용자 테이블 추가"))
+                .andExpect(jsonPath("$.commit_message").value(BIRD + NEXT + "\n\n등록자 : ejkim\n커밋 : jwhan\n설명 : 사용자 테이블 추가"))
                 .andExpect(jsonPath("$.author_name").doesNotExist())
                 .andExpect(jsonPath("$.actions.length()").value(1))
                 .andExpect(jsonPath("$.actions[0].action").value("create"))
                 .andExpect(jsonPath("$.actions[0].file_path").value(NEXT_PATH))
-                .andExpect(jsonPath("$.actions[0].content").value("CREATE TABLE users (id INT);\n"))
+                .andExpect(jsonPath("$.actions[0].content").value(content))
                 .andRespond(withStatus(HttpStatus.CREATED).contentType(MediaType.APPLICATION_JSON)
                         .body("{\"id\":\"aaaaaaaa11111111\",\"short_id\":\"aaaaaaaa\"}"));
         expectCommit("release", "bbbbbbbb22222222");
 
-        var done = service.commit(new Request("CREATE TABLE users (id INT);", "사용자 테이블 추가", "jwhan",
-                List.of("develop", "release"), saved.revision()));
+        var done = service.commit(commitBy("jwhan", "develop", "release"));
 
         assertThat(done.allSucceeded()).isTrue();
         assertThat(done.results()).extracting(r -> r.branch() + ":" + r.shortSha())
                 .containsExactly("develop:aaaaaaaa", "release:bbbbbbbb");
-        assertThat(Files.readString(dir.resolve("2026").resolve(NEXT))).isEqualTo("CREATE TABLE users (id INT);\n");
-        assertThat(done.draft().exists()).isFalse();
+        assertThat(Files.readString(dir.resolve("2026").resolve(NEXT))).isEqualTo(content);
+        assertThat(content).contains("-- [1/1] 등록자 : ejkim").doesNotContain("CREATE INDEX");
+
+        // 묶음은 비우고, 조각·삭제된 조각·이력은 history 에 보관
+        assertThat(store.readBoard()).isNull();
+        assertThat(done.archive()).isEqualTo("V261112.003__VADA");
+        assertThat(service.archives()).containsExactly("V261112.003__VADA");
+        FlywayBoard.Archive archive = service.archive("V261112.003__VADA");
+        assertThat(archive.content).isEqualTo(content);
+        assertThat(archive.committedBranches).containsExactly("develop", "release");
+        assertThat(archive.board.getDeleted()).singleElement().satisfies(p -> assertThat(p.sql).contains("CREATE INDEX"));
+        assertThat(archive.board.getLastLog().action).isEqualTo(FlywayBoard.Action.COMMIT);
+    }
+
+    @Test
+    void 다른_사람이_바꾼_묶음을_모르고_커밋하지_않는다() {
+        service.createPost(post("ejkim", "A", "SELECT 1;"));
+        long seen = service.board().revision;
+        service.createPost(post("jwhan", "B", "SELECT 2;"));
+
+        assertThatThrownBy(() -> service.commit(new CommitRequest("ejkim", List.of("release"), seen)))
+                .isInstanceOf(DraftConflictException.class).hasMessageContaining("jwhan").hasMessageContaining("등록");
     }
 
     @Test
     void 검증_오류가_있으면_어느_브랜치에도_커밋_요청을_보내지_않는다() {
         // POST /repository/commits 기대값을 등록하지 않았으므로 호출하면 MockRestServiceServer 가 실패시킨다
-        assertThatThrownBy(() -> service.commit(request("SELECT 1;", "", "develop", "release")))
+        service.createPost(post("ejkim", "A", "SELECT 1;"));
+        assertThatThrownBy(() -> service.commit(commitBy("", "develop", "release")))
                 .isInstanceOf(InvalidDraftException.class)
-                .satisfies(e -> assertThat(((InvalidDraftException) e).getPlan().errors()).anyMatch(m -> m.contains("등록자")));
+                .satisfies(e -> assertThat(((InvalidDraftException) e).getPlan().errors()).anyMatch(m -> m.contains("작업자")));
         assertThat(dir.resolve("2026")).doesNotExist();
     }
 
     @Test
-    void 일부_브랜치만_실패하면_실패한_브랜치와_버전을_임시저장에_남긴다() {
+    void 일부_브랜치만_실패하면_버전과_내용을_고정하고_조각_수정을_막는다() {
+        service.createPost(post("ejkim", "A", "SELECT 1;"));
+        String content = service.content(service.board());
         expectCommit("release", "cccccccc33333333");
         server.expect(once(), requestTo(PROJECT + "/repository/commits"))
                 .andExpect(jsonPath("$.branch").value("develop"))
                 .andRespond(withStatus(HttpStatus.FORBIDDEN).contentType(MediaType.APPLICATION_JSON)
                         .body("{\"message\":\"You are not allowed to push into this branch\"}"));
 
-        var done = service.commit(request("SELECT 1;", "chwonhan00", "develop", "release"));
+        var done = service.commit(commitBy("chwonhan00", "develop", "release"));
 
         assertThat(done.allSucceeded()).isFalse();
-        assertThat(done.results().get(0).success()).isFalse();
         assertThat(done.results().get(0).error()).contains("권한 없음(403)", "Allowed to push",
                 "You are not allowed to push into this branch");
         assertThat(done.results().get(1).success()).isTrue();
         assertThat(done.localFile()).endsWith(NEXT);
+        assertThat(done.archive()).isNull();
 
-        // 남은 브랜치에 다시 커밋할 때 같은 파일명이 쓰이도록 버전을 고정한다
-        assertThat(done.draft().branches()).containsExactly("develop");
-        assertThat(done.draft().pinnedVersion()).isEqualTo("261112.003");
+        FlywayBoard board = service.board();
+        assertThat(board.isLocked()).isTrue();
+        assertThat(board.pinnedVersion).isEqualTo("261112.003");
+        assertThat(board.pinnedContent).isEqualTo(content);
+        assertThat(board.pendingBranches).containsExactly("develop");
+        assertThat(board.committedBranches).containsExactly("release");
         assertThat(service.expectedFileName(List.of())).isEqualTo(NEXT);
+        assertThat(board.getLastLog().action).isEqualTo(FlywayBoard.Action.PARTIAL_COMMIT);
+
+        // 남은 브랜치에 같은 파일이 올라가야 하므로 조각을 바꿀 수 없다
+        assertThatThrownBy(() -> service.createPost(post("ejkim", "B", "SELECT 2;")))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("일부 브랜치");
+        assertThatThrownBy(() -> service.deletePost(1, as("ejkim", rev(1))))
+                .isInstanceOf(IllegalArgumentException.class);
+        // 이미 커밋한 브랜치에 다시 커밋할 수 없다
+        assertThat(service.plan(commitBy("ejkim", "release")).errors()).anyMatch(e -> e.contains("이미 이 파일을 커밋한"));
+
+        // 마감: 남은 브랜치는 커밋하지 않고 보관
+        String name = service.close(commitBy("ejkim"));
+        assertThat(store.readBoard()).isNull();
+        FlywayBoard.Archive archive = service.archive(name);
+        assertThat(archive.fileName).isEqualTo(NEXT);
+        assertThat(archive.committedBranches).containsExactly("release");
+        assertThat(archive.abandonedBranches).containsExactly("develop");
+        assertThat(archive.content).isEqualTo(content);
     }
 
     // ------------------------------------------------------------------ 로컬 동기화

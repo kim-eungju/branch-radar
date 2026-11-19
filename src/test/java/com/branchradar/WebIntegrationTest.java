@@ -68,6 +68,8 @@ class WebIntegrationTest {
         r.add("branch-radar.flyway.path", () -> "db/migration");
         r.add("branch-radar.flyway.local-dir", LOCAL_DIR::toString);
         r.add("branch-radar.flyway.sync-on-startup", () -> "false");
+        r.add("branch-radar.team-name", () -> "개발5팀");
+        r.add("branch-radar.flyway.workers", () -> "jwsung,ejkim,jwhan,chwonhan00");
     }
 
     @TestConfiguration
@@ -93,6 +95,9 @@ class WebIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(allOf(
                         containsString("demo"),
+                        // 상단 바: Branch Radar 팀명 / GitLab 프로젝트 이름
+                        matchesRegex("(?s).*Branch Radar\\s*</a>\\s*(<!--.*?-->\\s*)?<span class=\"br-team\">개발5팀</span>.*class=\"br-crumb\">demo<.*"),
+                        containsString("<title>대시보드 · Branch Radar</title>"),
                         containsString("V3"),                                     // 전체 최신 Flyway
                         containsString("V3__c.sql"),
                         containsString("뒤처짐"),
@@ -101,6 +106,7 @@ class WebIntegrationTest {
                         containsString("Tag 없음"),                               // release 에는 태그 없음
                         containsString("/-/tree/feature/x"),                      // 브랜치 링크
                         containsString("/-/tags/v2.0.0"),
+                        containsString("2026-11-01 09:00"),                       // 태그 생성 시각(UTC 00:00) → 한국시간
                         containsString("장기 미갱신"),                            // release: 2026-08-20 → 77일
                         containsString("77일"),
                         containsString("data-activity=\"STALE\""),                // feature/x: 35일
@@ -126,7 +132,49 @@ class WebIntegrationTest {
                         containsString("같은 파일명이지만 SQL 내용이 다름"),
                         containsString("Flyway checksum 다름"),
                         containsString("only in feature"),
-                        containsString("이력상 누락 후보"))));
+                        containsString("이력상 누락 후보"),
+                        // 브랜치 선택은 검색되는 select
+                        containsString("<select id=\"branchA\" name=\"a\" class=\"form-select\" data-searchable>"),
+                        // Git 커밋 비교 탭이 먼저, 기본으로 열림
+                        matchesRegex("(?s).*nav-link active\" data-bs-toggle=\"tab\" data-bs-target=\"#tabCommits\".*data-bs-target=\"#tabFlyway\".*"),
+                        // "A 에 있고 B 에 없는 커밋" 대신 실제 브랜치 이름
+                        containsString("<span class=\"bn bn-a\">feature/x</span> 에 있고 <span class=\"bn bn-b\">release/1.0</span> 에 없는 커밋"),
+                        containsString("<span class=\"bn bn-b\">release/1.0</span> 에 있고 <span class=\"bn bn-a\">feature/x</span> 에 없는 커밋"),
+                        not(containsString("A 에 있고 B 에 없는")))));
+    }
+
+    @Test
+    void 커밋_내역_화면() throws Exception {
+        mvc.perform(get("/commits").param("branch", "feature/x"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(allOf(
+                        containsString("&lt;b&gt;feature commit&lt;/b&gt;"),           // 제목은 이스케이프
+                        containsString("shafeat"),
+                        containsString("kim"),
+                        containsString("2026-10-01 09:00"),
+                        containsString(">merge<"),
+                        containsString("page=2"),
+                        not(containsString("older commit")))));
+        mvc.perform(get("/commits").param("branch", "feature/x").param("page", "2"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(allOf(containsString("older commit"), containsString("page=1"))));
+        // 검색: 메시지(2페이지까지 넘겨서 찾음), 작성자(대소문자 무시), SHA 앞부분
+        mvc.perform(get("/commits").param("branch", "feature/x").param("q", "OLDER"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(allOf(
+                        containsString("older commit"),
+                        not(containsString("feature commit")),
+                        containsString("최근 커밋 2개 검색"),
+                        containsString("검색 해제"))));
+        mvc.perform(get("/commits").param("branch", "feature/x").param("q", "KIM"))
+                .andExpect(content().string(allOf(containsString("feature commit"), not(containsString("older commit")))));
+        mvc.perform(get("/commits").param("branch", "feature/x").param("q", "old0"))
+                .andExpect(content().string(allOf(containsString("older commit"), not(containsString("feature commit")))));
+        mvc.perform(get("/commits").param("branch", "feature/x").param("q", "없는검색어"))
+                .andExpect(content().string(containsString("검색 결과가 없습니다.")));
+        // 대시보드의 브랜치명은 커밋 내역 화면으로 연결된다
+        mvc.perform(get("/"))
+                .andExpect(content().string(containsString("/commits?branch=feature/x")));
     }
 
     @Test
@@ -147,15 +195,15 @@ class WebIntegrationTest {
 
     /** 임시저장 상태를 공유하므로 Flyway 관리 흐름은 한 테스트에서 순서대로 확인한다. 오늘 = 2026-11-05 */
     @Test
-    void Flyway_관리_목록_임시저장_커밋() throws Exception {
+    void Flyway_묶음_등록_커밋_보관() throws Exception {
         COMMIT_BODIES.clear();
         String file = "V261105.001__VADA.sql";
 
-        // 화면: develop 의 Flyway 목록, 등록자 4명, 예정 파일명, 기준 브랜치만 기본 선택
+        // 화면: develop 의 Flyway 목록, 작업자 4명, 예정 파일명, 기준 브랜치만 기본 선택, 빈 묶음
         mvc.perform(get("/flyway"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(allOf(
-                        containsString("Flyway 관리"),
+                        containsString("이번 묶음"),
                         containsString("V2__b.sql"),
                         containsString("V1__a.sql"),
                         not(containsString("V3__c.sql")),                          // feature/x 에만 있는 파일
@@ -168,72 +216,122 @@ class WebIntegrationTest {
                         matchesRegex("(?s).*fw-branch-card st-ok.*value=\"feature/x\".*fw-branch-card st-warn"
                                 + ".*value=\"develop\".*fw-branch-card st-danger.*value=\"release/1.0\".*"),
                         not(containsString("fw-branch-card st-neutral")),          // 파일 없음·조회 불가 브랜치가 없으면 기타 카드 없음
-                        containsString("임시저장 없음"))));
+                        containsString("아직 모인 조각이 없습니다."))));
 
-        // 임시저장 → 대시보드에 작성 중인 Flyway 로 표시
-        String saved = mvc.perform(post("/api/flyway/draft").contentType(MediaType.APPLICATION_JSON)
-                        .content(requestJson("SELECT 42;", "jwhan", 0, "develop", "feature/x")))
+        // 조각 등록 → 묶음과 대시보드에 표시 (설명은 이스케이프)
+        mvc.perform(post("/api/flyway/posts").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"actor\":\"jwhan\",\"description\":\"<b>테스트 설명</b>\",\"sql\":\"SELECT 42;\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.exists").value(true))
-                .andReturn().getResponse().getContentAsString();
-        long revision = Long.parseLong(saved.replaceAll("(?s).*\"revision\":(\\d+).*", "$1"));
+                .andExpect(jsonPath("$.posts").value(1));
+        // 작업자를 고르지 않으면 등록 불가
+        mvc.perform(post("/api/flyway/posts").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"actor\":\"\",\"description\":\"x\",\"sql\":\"SELECT 1;\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(containsString("작업자")));
+        // 다른 사람이 조각을 하나 더 올렸다가 삭제 → 내용은 남고 이력에 기록된다
+        mvc.perform(post("/api/flyway/posts").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"actor\":\"jwsung\",\"description\":\"지울 조각\",\"sql\":\"DELETE FROM t;\"}"))
+                .andExpect(status().isOk());
+        mvc.perform(post("/api/flyway/posts/2/delete").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"actor\":\"ejkim\",\"revision\":1}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.posts").value(1));
+        // 이미 삭제된 조각을 예전 revision 으로 다시 건드리면 409
+        mvc.perform(post("/api/flyway/posts/2/update").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"actor\":\"jwhan\",\"description\":\"x\",\"sql\":\"SELECT 1;\",\"revision\":1}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value(containsString("ejkim")));
+        long revision = Long.parseLong(mvc.perform(get("/api/flyway/board"))
+                // 묶음의 revision 은 첫 필드다 (조각마다 있는 revision 과 헷갈리지 않게 처음 것만)
+                .andReturn().getResponse().getContentAsString().replaceAll("(?s)^.*?\"revision\":(\\d+).*$", "$1"));
+
+        mvc.perform(get("/flyway"))
+                .andExpect(content().string(allOf(
+                        containsString("SELECT 42;"),
+                        containsString("&lt;b&gt;테스트 설명&lt;/b&gt;"),
+                        containsString("-- [1/1] 등록자 : jwhan"),                  // 합친 파일 미리보기 (삭제된 조각 제외)
+                        // 탭: 조각 1 / 삭제된 조각 1 / 변경 이력 3
+                        matchesRegex("(?s).*data-tab=\"posts\".*?class=\"count\">1<.*data-tab=\"deleted\".*?class=\"count\">1<"
+                                + ".*data-tab=\"log\".*?class=\"count\">3<.*"),
+                        containsString("DELETE FROM t;"),                          // 삭제된 조각의 SQL 도 남아 있음
+                        containsString("이전 내용"))));
         mvc.perform(get("/"))
                 .andExpect(content().string(allOf(
                         containsString("draft-panel"),
                         containsString(file),
-                        containsString("SELECT 42;"))));
-        mvc.perform(get("/flyway"))
-                .andExpect(content().string(allOf(
                         containsString("SELECT 42;"),
-                        containsString("value=\"feature/x\" checked=\"checked\""))));
+                        containsString("1개"))));
 
-        // 예전 화면(revision 0)에서 저장하면 409
-        mvc.perform(post("/api/flyway/draft").contentType(MediaType.APPLICATION_JSON)
-                        .content(requestJson("SELECT 0;", "ejkim", 0, "develop")))
+        // 예전 화면(revision 0)에서 커밋하면 409
+        mvc.perform(post("/api/flyway/commit").contentType(MediaType.APPLICATION_JSON)
+                        .content(commitJson("jwhan", 0, "develop")))
                 .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.error").value(containsString("jwhan")));
+                .andExpect(jsonPath("$.error").value(containsString("ejkim 이(가) 2026-11-05 12:00 에 삭제")));
 
-        // 검증: 등록자를 고르지 않으면 커밋 불가
+        // 검증: 작업자를 고르지 않으면 커밋 불가
         mvc.perform(post("/api/flyway/validate").contentType(MediaType.APPLICATION_JSON)
-                        .content(requestJson("SELECT 42;", "", revision, "develop")))
+                        .content(commitJson("", revision, "develop")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.ok").value(false))
                 .andExpect(jsonPath("$.fileName").value(file));
         mvc.perform(post("/api/flyway/commit").contentType(MediaType.APPLICATION_JSON)
-                        .content(requestJson("SELECT 42;", "", revision, "develop")))
+                        .content(commitJson("", revision, "develop")))
                 .andExpect(status().isUnprocessableEntity())
-                .andExpect(jsonPath("$.plan.errors[0]").value(containsString("등록자")));
+                .andExpect(jsonPath("$.plan.errors[0]").value(containsString("작업자")));
         // JSON 이 아닌 본문(다른 사이트의 form 전송)은 받지 않는다
         mvc.perform(post("/api/flyway/commit").contentType(MediaType.APPLICATION_FORM_URLENCODED)
-                        .param("sql", "SELECT 1;").param("worker", "jwhan").param("branches", "develop"))
+                        .param("actor", "jwhan").param("branches", "develop"))
+                .andExpect(status().isUnsupportedMediaType());
+        mvc.perform(post("/api/flyway/posts").contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                        .param("actor", "jwhan").param("description", "x").param("sql", "DROP TABLE x;"))
                 .andExpect(status().isUnsupportedMediaType());
         assertThat(COMMIT_BODIES).isEmpty();
 
-        // 커밋: 두 브랜치에 같은 파일, 로컬 폴더에도 저장, 임시저장은 지워짐
+        // 커밋: 두 브랜치에 같은 파일, 로컬 폴더에도 저장, 묶음은 보관 후 비움
         mvc.perform(post("/api/flyway/commit").contentType(MediaType.APPLICATION_JSON)
-                        .content(requestJson("SELECT 42;", "jwhan", revision, "develop", "feature/x")))
+                        .content(commitJson("ejkim", revision, "develop", "feature/x")))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.allSucceeded").value(true))
                 .andExpect(jsonPath("$.filePath").value("db/migration/" + file))
                 .andExpect(jsonPath("$.results.length()").value(2))
                 .andExpect(jsonPath("$.results[0].sha").value("c0ffee0000000001"))
-                .andExpect(jsonPath("$.draft.exists").value(false));
+                .andExpect(jsonPath("$.archive").value("V261105.001__VADA"));
 
         assertThat(COMMIT_BODIES).hasSize(2);
         assertThat(COMMIT_BODIES.get(0))
                 .contains("\"branch\":\"develop\"")
                 .contains("\"file_path\":\"db/migration/" + file + "\"")
                 .contains("\"action\":\"create\"")
-                .contains(BIRD + "" + file + "\\n\\n등록자 : jwhan\\n설명 : 테스트 설명");
+                .contains(BIRD + "" + file + "\\n\\n등록자 : jwhan\\n커밋 : ejkim\\n설명 : <b>테스트 설명</b>");
         assertThat(COMMIT_BODIES.get(1)).contains("\"branch\":\"feature/x\"");
-        assertThat(LOCAL_DIR.resolve(file)).hasContent("SELECT 42;\n");
+        assertThat(LOCAL_DIR.resolve(file)).content(StandardCharsets.UTF_8)
+                .contains("-- [1/1] 등록자 : jwhan | 등록 : 2026-11-05 12:00", "-- 설명 : <b>테스트 설명</b>")
+                .endsWith("SELECT 42;\n");
         mvc.perform(get("/"))
                 .andExpect(content().string(not(containsString("draft-panel"))));
+
+        // 지난 묶음: 목록과 상세 (읽기 전용)
+        mvc.perform(get("/flyway"))
+                .andExpect(content().string(allOf(
+                        containsString("아직 모인 조각이 없습니다."),
+                        containsString("/flyway/history/V261105.001__VADA"))));
+        mvc.perform(get("/flyway/history/V261105.001__VADA"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(allOf(
+                        containsString("SELECT 42;"),
+                        containsString("&lt;b&gt;테스트 설명&lt;/b&gt;"),
+                        containsString("develop, feature/x"),
+                        containsString("삭제된 조각 1개"),
+                        containsString("DELETE FROM t;"),
+                        containsString("커밋"))));
+        mvc.perform(get("/flyway/history/no-such"))
+                .andExpect(status().isOk())
+                .andExpect(content().string(containsString("찾을 수 없습니다")));
     }
 
-    private static String requestJson(String sql, String worker, long revision, String... branches) {
-        return "{\"sql\":\"" + sql + "\",\"description\":\"테스트 설명\",\"worker\":\"" + worker
-                + "\",\"revision\":" + revision + ",\"branches\":[\"" + String.join("\",\"", branches) + "\"]}";
+    private static String commitJson(String actor, long revision, String... branches) {
+        return "{\"actor\":\"" + actor + "\",\"revision\":" + revision
+                + ",\"branches\":[\"" + String.join("\",\"", branches) + "\"]}";
     }
 
     // ------------------------------------------------------------------ fake GitLab
@@ -282,6 +380,16 @@ class WebIntegrationTest {
             if (path.equals(P + "/repository/commits")) {
                 COMMIT_BODIES.add(new String(ex.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 body = "{\"id\":\"c0ffee0000000001\",\"short_id\":\"c0ffee00\",\"title\":\"t\"}";
+            }
+        } else if (path.equals(P + "/repository/commits")) {
+            if (query.contains("ref_name=feature%2Fx")) {
+                if (query.contains("&page=1")) {
+                    ex.getResponseHeaders().add("X-Next-Page", "2");
+                    body = "[{\"id\":\"sha-feature\",\"short_id\":\"shafeat\",\"title\":\"<b>feature commit</b>\","
+                            + "\"author_name\":\"kim\",\"committed_date\":\"2026-10-01T09:00:00+09:00\",\"parent_ids\":[\"a\",\"b\"]}]";
+                } else {
+                    body = "[{\"id\":\"old0001\",\"short_id\":\"old0001\",\"title\":\"older commit\",\"parent_ids\":[\"a\"]}]";
+                }
             }
         } else if (path.equals(P)) {
             body = "{\"id\":1,\"name\":\"demo\",\"path_with_namespace\":\"group/demo\",\"web_url\":\"https://gitlab.example.com/group/demo\"}";

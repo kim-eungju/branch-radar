@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko" data-bs-theme="dark">
+<head th:replace="~{fragments/layout :: head('지난 묶음')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: topbar('flyway', null, null, null)}"></header>
+
+<div class="br-shell">
+
+<main class="br-main">
+
+    <div class="br-page-head">
+        <div>
+            <h1>지난 묶음 <span class="mono" th:text="${name}"></span></h1>
+            <div class="sub">커밋을 마친 묶음입니다. 읽기 전용입니다.</div>
+        </div>
+        <a th:href="@{/flyway}" class="btn btn-ghost">← Flyway 관리</a>
+    </div>
+
+    <div th:if="${error}" class="notice notice-danger">
+        <svg th:replace="~{fragments/layout :: icon('alert')}"></svg><div th:text="${error}"></div>
+    </div>
+
+    <th:block th:if="${archive}" th:with="b=${archive.board}">
+        <section class="panel">
+            <div class="panel-head">
+                <svg th:replace="~{fragments/layout :: icon('filePlus')}"></svg>
+                <span class="mono" th:text="${archive.fileName}"></span>
+                <button type="button" class="btn btn-ghost btn-sm ms-auto sql-local" data-source="archiveContent"
+                        th:data-file="${archive.fileName}" th:data-meta="${archive.filePath ?: ''}">
+                    <svg th:replace="~{fragments/layout :: icon('search')}"></svg> 커밋한 파일 보기
+                </button>
+            </div>
+            <div class="panel-body">
+                <dl class="kv mt-0">
+                    <dt>끝낸 시각</dt><dd th:text="${archive.closedAt} + ' · ' + ${archive.closedBy}"></dd>
+                    <dt>커밋된 브랜치</dt><dd class="mono" th:text="${archive.committedBranches.isEmpty()} ? '-' : ${#strings.listJoin(archive.committedBranches, ', ')}"></dd>
+                    <dt th:unless="${archive.abandonedBranches.isEmpty()}">마감(커밋 안 함)</dt>
+                    <dd th:unless="${archive.abandonedBranches.isEmpty()}" class="mono text-warn" th:text="${#strings.listJoin(archive.abandonedBranches, ', ')}"></dd>
+                    <dt>등록자</dt><dd th:text="${b.authors.isEmpty()} ? '-' : ${#strings.listJoin(b.authors, ', ')}"></dd>
+                </dl>
+                <pre id="archiveContent" hidden th:text="${archive.content}"></pre>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">조각 <span class="count" th:text="${b.active.size()}"></span></div>
+            <div class="panel-body">
+                <div th:if="${b.active.isEmpty()}" class="empty">조각이 없습니다.</div>
+                <article th:each="p, it : ${b.active}" class="fw-post">
+                    <div class="fw-post-head">
+                        <span class="fw-post-no" th:text="${it.count}">1</span>
+                        <span class="mono text-faint" th:text="'#' + ${p.id}"></span>
+                        <b th:text="${p.author}"></b>
+                        <span class="text-faint small" th:text="${p.createdAt}"></span>
+                        <span th:if="${p.edited}" class="chip" th:text="'수정 ' + ${p.updatedBy} + ' · ' + ${p.updatedAt}"></span>
+                    </div>
+                    <div class="fw-post-desc" th:text="${p.description}"></div>
+                    <pre class="sql-preview fw-post-sql" th:text="${p.sql}"></pre>
+                </article>
+
+                <details class="fw-deleted mt-3" th:unless="${b.deleted.isEmpty()}">
+                    <summary th:text="'삭제된 조각 ' + ${b.deleted.size()} + '개'"></summary>
+                    <div th:each="p : ${b.deleted}" class="fw-deleted-row">
+                        <span class="mono text-faint" th:text="'#' + ${p.id}"></span>
+                        <span th:text="${p.description}" class="fw-ellipsis"></span>
+                        <span class="text-faint small" th:text="'작성 ' + ${p.author} + ' · 삭제 ' + ${p.deletedBy} + ' ' + ${p.deletedAt}"></span>
+                        <button type="button" class="btn btn-ghost btn-sm sql-local ms-auto" th:data-source="'deleted-sql-' + ${p.id}"
+                                th:data-file="'#' + ${p.id} + ' (삭제됨)'" th:data-meta="${p.description}">SQL 보기</button>
+                        <pre hidden th:id="'deleted-sql-' + ${p.id}" th:text="${p.sql}"></pre>
+                    </div>
+                </details>
+            </div>
+        </section>
+
+        <section class="panel">
+            <div class="panel-head">변경 이력 <span class="count" th:text="${b.log.size()}"></span></div>
+            <div th:replace="~{fragments/flyway :: logTable(${b.recentLog})}"></div>
+        </section>
+    </th:block>
+
+    <section class="panel" th:unless="${archives.isEmpty()}">
+        <div class="panel-head"><svg th:replace="~{fragments/layout :: icon('clock')}"></svg> 지난 묶음 <span class="count" th:text="${archives.size()}"></span></div>
+        <div class="fw-archives">
+            <a th:each="a : ${archives}" th:href="@{/flyway/history/{n}(n=${a})}" class="chip chip-mono"
+               th:classappend="${a == name} ? 'chip-accent'" th:text="${a}"></a>
+        </div>
+    </section>
+</main>
+</div>
+
+<div th:replace="~{fragments/layout :: sqlModal}"></div>
+<th:block th:replace="~{fragments/layout :: scripts}"></th:block>
+</body>
+</html>

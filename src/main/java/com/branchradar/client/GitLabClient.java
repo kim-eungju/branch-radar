@@ -107,6 +107,19 @@ public class GitLabClient {
         return get(url, CompareResponse.class, "비교 " + from + " → " + to).getBody();
     }
 
+    /**
+     * 브랜치(ref)의 커밋 이력 한 페이지 (최신순). 화면에서 페이지를 넘기므로 전체를 조회하지 않는다.
+     * hasNext 는 GitLab 의 X-Next-Page 헤더로 판단한다.
+     */
+    public CommitPage listCommits(String ref, int page, int perPage) {
+        String url = projectUrl("/repository/commits?ref_name=" + enc(ref)
+                + "&per_page=" + perPage + "&page=" + page);
+        ResponseEntity<List<Commit>> res = get(url, new ParameterizedTypeReference<>() {}, "커밋 이력 '" + ref + "'");
+        String next = res.getHeaders().getFirst("X-Next-Page");
+        List<Commit> items = res.getBody() == null ? List.of() : res.getBody();
+        return new CommitPage(items, next != null && !next.isBlank());
+    }
+
     public Paged<Tag> listTags() {
         return getAllPages(projectUrl("/repository/tags?per_page=" + PER_PAGE),
                 new ParameterizedTypeReference<>() {}, "태그 목록");
@@ -244,6 +257,10 @@ public class GitLabClient {
 
     /** 페이지네이션 결과. complete=false 면 max-pages 제한으로 일부만 조회된 것이다. */
     public record Paged<T>(List<T> items, boolean complete) {
+    }
+
+    /** 커밋 이력 한 페이지. hasNext=true 면 다음 페이지가 있다. */
+    public record CommitPage(List<Commit> items, boolean hasNext) {
     }
 
     @JsonIgnoreProperties(ignoreUnknown = true)

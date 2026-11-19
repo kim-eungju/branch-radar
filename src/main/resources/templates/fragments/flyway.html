@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org" lang="ko">
+<body>
+
+<!-- 변경 이력 표 (최신부터). 수정·삭제 전 내용은 숨겨둔 pre 에 넣고 공용 SQL 모달로 띄운다 (textContent 로만 옮김) -->
+<div th:fragment="logTable(entries)" class="table-wrap">
+    <table class="br-table">
+        <thead><tr><th>시각</th><th>누가</th><th>작업</th><th>조각</th><th>내용</th><th></th></tr></thead>
+        <tbody>
+        <tr th:each="e, it : ${entries}">
+            <td class="mono text-nowrap text-muted-2" th:text="${e.at}"></td>
+            <td class="text-nowrap" th:text="${e.who}"></td>
+            <td class="text-nowrap">
+                <span class="st" th:classappend="${e.action.name() == 'DELETE'} ? 'st-danger'
+                        : (${e.action.name() == 'UPDATE' or e.action.name() == 'PARTIAL_COMMIT' or e.action.name() == 'CLOSE'} ? 'st-warn'
+                        : (${e.action.name() == 'COMMIT' or e.action.name() == 'CREATE'} ? 'st-ok' : 'st-neutral'))">
+                    <span class="dot"></span><span th:text="${e.action.label}"></span>
+                </span>
+            </td>
+            <td class="mono text-faint" th:text="${e.postId > 0} ? '#' + ${e.postId} : ''"></td>
+            <td th:text="${e.detail}"></td>
+            <td class="text-nowrap text-end">
+                <th:block th:if="${e.hasBefore()}">
+                    <button type="button" class="btn btn-ghost btn-sm sql-local" th:data-source="'log-before-' + ${it.index}"
+                            th:data-file="'#' + ${e.postId} + ' ' + ${e.action.label} + ' 전 내용'"
+                            th:data-meta="${e.at} + ' · ' + ${e.who} + ' · 설명: ' + ${e.beforeDescription}">이전 내용</button>
+                    <pre hidden th:id="'log-before-' + ${it.index}" th:text="${e.beforeSql}"></pre>
+                </th:block>
+            </td>
+        </tr>
+        </tbody>
+    </table>
+</div>
+
+</body>
+</html>

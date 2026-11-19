@@ -5,6 +5,7 @@ import com.branchradar.config.GitLabProperties;
 import com.branchradar.dto.DashboardView;
 import com.branchradar.dto.FlywayVersion;
 import com.branchradar.service.BranchService;
+import com.branchradar.service.FlywayBoard;
 import com.branchradar.service.FlywayCommitService;
 
 import java.util.ArrayList;
@@ -37,11 +38,12 @@ public class DashboardController {
             DashboardView view = branchService.dashboard(base);
             model.addAttribute("view", view);
             // 작성 중인 Flyway (커밋되면 가장 최신이 될 파일)
-            FlywayCommitService.DraftView draft = commitService.draft();
-            if (draft.exists()) {
+            FlywayBoard draft = commitService.board();
+            if (!draft.isEmpty()) {
                 List<FlywayVersion> versions = new ArrayList<>();
                 view.rows().forEach(r -> r.branch().versioned().forEach(m -> versions.add(m.version())));
                 model.addAttribute("draft", draft);
+                model.addAttribute("draftContent", commitService.content(draft));
                 model.addAttribute("draftFileName", commitService.expectedFileName(versions));
             }
         } catch (GitLabException e) {

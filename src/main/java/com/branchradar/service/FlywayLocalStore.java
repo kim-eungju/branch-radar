@@ -10,20 +10,27 @@ import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Stream;
 
 /**
  * 로컬 폴더(branch-radar.flyway.local-dir) 입출력.
  * <ul>
  *   <li>Flyway 파일: 저장소의 마이그레이션 디렉터리 기준 상대 경로 그대로 저장한다 (하위 폴더 유지)</li>
- *   <li>작성 중인 임시저장: .draft.json 한 개</li>
+ *   <li>이번 묶음: .board.json 한 개</li>
+ *   <li>커밋이 끝난 묶음: history/{파일명}.json</li>
  * </ul>
  * GitLab 을 호출하지 않는다.
  */
 @Component
 public class FlywayLocalStore {
 
-    private static final String DRAFT_FILE = ".draft.json";
+    private static final String BOARD_FILE = ".board.json";
+    /** 예전 임시저장 파일. 남아 있으면 묶음 조각 하나로 옮긴 뒤 지운다 */
+    private static final String LEGACY_DRAFT_FILE = ".draft.json";
+    private static final String HISTORY_DIR = "history";
 
     private final Path root;
     private final ObjectMapper mapper;
@@ -39,13 +46,10 @@ public class FlywayLocalStore {
     }
 
     /**
-     * 작성 중인 Flyway (모든 작업자가 함께 쓰는 한 개).
-     *
-     * @param revision      저장할 때마다 커지는 값. 다른 사람이 먼저 저장했는지 확인하는 데 쓴다
-     * @param pinnedVersion 일부 브랜치에만 커밋된 경우 그 버전. 남은 브랜치에도 같은 파일명으로 올리기 위해 고정한다
+     * 예전 임시저장 (모든 작업자가 함께 쓰던 SQL 한 개). 옮기기 위해서만 읽는다.
      */
-    public record Draft(String sql, String description, String worker, List<String> branches,
-                        long revision, String updatedAt, String pinnedVersion) {
+    public record LegacyDraft(String sql, String description, String worker, List<String> branches,
+                              long revision, String updatedAt, String pinnedVersion) {
     }
 
     public Path root() {
@@ -77,35 +81,103 @@ public class FlywayLocalStore {
         return target;
     }
 
-    /** @return 임시저장이 없으면 null */
-    public Draft readDraft() {
-        Path file = root.resolve(DRAFT_FILE);
+    // ---------------------------------------------------------------- 묶음
+
+    /** @return 묶음 파일이 없으면 null */
+    public FlywayBoard readBoard() {
+        return readJson(root.resolve(BOARD_FILE), FlywayBoard.class, "묶음");
+    }
+
+    public void writeBoard(FlywayBoard board) {
+        writeJson(root.resolve(BOARD_FILE), board, "묶음");
+    }
+
+    public void deleteBoard() {
+        delete(root.resolve(BOARD_FILE), "묶음");
+    }
+
+    /** @return 이전 임시저장 파일이 없으면 null */
+    public LegacyDraft readLegacyDraft() {
+        return readJson(root.resolve(LEGACY_DRAFT_FILE), LegacyDraft.class, "이전 임시저장");
+    }
+
+    public void deleteLegacyDraft() {
+        delete(root.resolve(LEGACY_DRAFT_FILE), "이전 임시저장");
+    }
+
+    // ---------------------------------------------------------------- 보관 (history)
+
+    /** 커밋이 끝난 묶음을 보관한다. 같은 파일명이 이미 있으면 -2, -3 을 붙인다. */
+    public String writeArchive(FlywayBoard.Archive archive) {
+        String base = archiveName(archive.fileName);
+        Path dir = root.resolve(HISTORY_DIR);
+        String name = base;
+        for (int i = 2; Files.exists(dir.resolve(name + ".json")); i++) {
+            name = base + "-" + i;
+        }
+        writeJson(dir.resolve(name + ".json"), archive, "보관 파일");
+        return name;
+    }
+
+    /** 보관된 묶음 이름 (최신 파일명부터) */
+    public List<String> listArchives() {
+        Path dir = root.resolve(HISTORY_DIR);
+        if (!Files.isDirectory(dir)) return List.of();
+        try (Stream<Path> files = Files.list(dir)) {
+            List<String> names = new ArrayList<>(files
+                    .map(p -> p.getFileName().toString())
+                    .filter(n -> n.endsWith(".json"))
+                    .map(n -> n.substring(0, n.length() - ".json".length()))
+                    .toList());
+            names.sort(Comparator.reverseOrder());
+            return names;
+        } catch (IOException e) {
+            throw new UncheckedIOException("보관 폴더를 읽지 못했습니다: " + dir, e);
+        }
+    }
+
+    /** @return 없으면 null */
+    public FlywayBoard.Archive readArchive(String name) {
+        if (name == null || !name.matches("[A-Za-z0-9._-]+")) {
+            throw new IllegalArgumentException("잘못된 보관 이름입니다: " + name);
+        }
+        return readJson(root.resolve(HISTORY_DIR).resolve(name + ".json"), FlywayBoard.Archive.class, "보관 파일");
+    }
+
+    /** V261119.001__VADA.sql → V261119.001__VADA (파일 이름에 쓸 수 없는 글자는 _) */
+    static String archiveName(String fileName) {
+        String name = fileName == null ? "unknown" : fileName.replaceFirst("\\.[^.]*$", "");
+        return name.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
+
+    // ---------------------------------------------------------------- JSON
+
+    private <T> T readJson(Path file, Class<T> type, String what) {
         if (!Files.exists(file)) return null;
         try {
-            return mapper.readValue(Files.readAllBytes(file), Draft.class);
+            return mapper.readValue(Files.readAllBytes(file), type);
         } catch (IOException e) {
-            throw new UncheckedIOException("임시저장 파일을 읽지 못했습니다: " + file, e);
+            throw new UncheckedIOException(what + " 파일을 읽지 못했습니다: " + file, e);
         }
     }
 
-    public void writeDraft(Draft draft) {
-        Path file = root.resolve(DRAFT_FILE);
+    private void writeJson(Path file, Object value, String what) {
         try {
-            Files.createDirectories(root);
-            // 쓰는 도중 중단되어도 기존 임시저장이 깨지지 않게 임시 파일에 쓴 뒤 바꿔치기한다
-            Path tmp = root.resolve(DRAFT_FILE + ".tmp");
-            Files.write(tmp, mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(draft));
+            Files.createDirectories(file.getParent());
+            // 쓰는 도중 중단되어도 기존 파일이 깨지지 않게 임시 파일에 쓴 뒤 바꿔치기한다
+            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+            Files.write(tmp, mapper.writerWithDefaultPrettyPrinter().writeValueAsBytes(value));
             Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException e) {
-            throw new UncheckedIOException("임시저장 파일을 쓰지 못했습니다: " + file, e);
+            throw new UncheckedIOException(what + " 파일을 쓰지 못했습니다: " + file, e);
         }
     }
 
-    public void deleteDraft() {
+    private static void delete(Path file, String what) {
         try {
-            Files.deleteIfExists(root.resolve(DRAFT_FILE));
+            Files.deleteIfExists(file);
         } catch (IOException e) {
-            throw new UncheckedIOException("임시저장 파일을 지우지 못했습니다.", e);
+            throw new UncheckedIOException(what + " 파일을 지우지 못했습니다: " + file, e);
         }
     }
 }

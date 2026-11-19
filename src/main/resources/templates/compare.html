@@ -28,7 +28,7 @@
         <form method="get" th:action="@{/compare}" class="compare-bar">
             <div>
                 <label for="branchA" class="field-label d-block mb-1">기준 브랜치 A</label>
-                <select id="branchA" name="a" class="form-select">
+                <select id="branchA" name="a" class="form-select" data-searchable>
                     <option th:each="n : ${branchNames}" th:value="${n}" th:text="${n}" th:selected="${n == a}"></option>
                 </select>
             </div>
@@ -37,7 +37,7 @@
             </button>
             <div>
                 <label for="branchB" class="field-label d-block mb-1">비교 대상 브랜치 B</label>
-                <select id="branchB" name="b" class="form-select">
+                <select id="branchB" name="b" class="form-select" data-searchable>
                     <option value="" th:selected="${b == ''}">— 선택 —</option>
                     <option th:each="n : ${branchNames}" th:value="${n}" th:text="${n}" th:selected="${n == b}"></option>
                 </select>
@@ -56,17 +56,17 @@
             <span class="branch-pill b" th:text="${result.b.name}">B</span> 브랜치에 없는 항목
         </div>
         <div class="text-muted-2 small mb-3">
-            A <a th:href="${links.commit(projectWebUrl, result.a.commitSha)}" target="_blank" rel="noopener noreferrer" class="sha" th:text="${result.a.shortSha()}"></a>
-            · B <a th:href="${links.commit(projectWebUrl, result.b.commitSha)}" target="_blank" rel="noopener noreferrer" class="sha" th:text="${result.b.shortSha()}"></a>
+            <span class="bn bn-a" th:text="${result.a.name}">A</span> <a th:href="${links.commit(projectWebUrl, result.a.commitSha)}" target="_blank" rel="noopener noreferrer" class="sha" th:text="${result.a.shortSha()}"></a>
+            · <span class="bn bn-b" th:text="${result.b.name}">B</span> <a th:href="${links.commit(projectWebUrl, result.b.commitSha)}" target="_blank" rel="noopener noreferrer" class="sha" th:text="${result.b.shortSha()}"></a>
             · 각 브랜치의 최신 커밋 기준
         </div>
 
         <!-- ============================== 요약 -->
         <div class="tiles">
             <div class="tile t-warn">
-                <div class="label">B 에 없는 Flyway</div>
+                <div class="label"><span class="bn bn-b" th:text="${result.b.name}">B</span> 에 없는 Flyway</div>
                 <div class="value" th:classappend="${f.onlyInA.size() > 0} ? 'text-warn'" th:text="${f.onlyInA.size()}">0</div>
-                <div class="foot">반대로 B 에만 있음 <span th:text="${f.onlyInB.size()}"></span></div>
+                <div class="foot">반대로 <span class="bn bn-b" th:text="${result.b.name}">B</span> 에만 있음 <span th:text="${f.onlyInB.size()}"></span></div>
             </div>
             <div class="tile t-danger">
                 <div class="label">충돌 위험 Flyway</div>
@@ -92,27 +92,27 @@
         <!-- ============================== 탭 -->
         <ul class="nav br-tabs" role="tablist">
             <li class="nav-item" role="presentation">
-                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabFlyway" type="button" role="tab">
-                    <svg th:replace="~{fragments/layout :: icon('db')}"></svg> Flyway 비교
+                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tabCommits" type="button" role="tab">
+                    <svg th:replace="~{fragments/layout :: icon('commit')}"></svg> Git 커밋 비교
+                    <span class="chip chip-mono" th:text="${c.aNotBNoPick().size()}"></span>
                 </button>
             </li>
             <li class="nav-item" role="presentation">
-                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabCommits" type="button" role="tab">
-                    <svg th:replace="~{fragments/layout :: icon('commit')}"></svg> Git 커밋 비교
-                    <span class="chip chip-mono" th:text="${c.aNotBNoPick().size()}"></span>
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tabFlyway" type="button" role="tab">
+                    <svg th:replace="~{fragments/layout :: icon('db')}"></svg> Flyway 비교
                 </button>
             </li>
         </ul>
 
         <div class="tab-content">
             <!-- ------------------------------ Flyway -->
-            <div class="tab-pane fade show active" id="tabFlyway" role="tabpanel">
+            <div class="tab-pane fade" id="tabFlyway" role="tabpanel">
 
                 <div th:if="${result.a.dirMissing or result.b.dirMissing}" class="notice notice-info">
                     <svg th:replace="~{fragments/layout :: icon('info')}"></svg>
                     <div>
-                        <span th:if="${result.a.dirMissing}">A 브랜치에 마이그레이션 디렉터리가 없습니다. </span>
-                        <span th:if="${result.b.dirMissing}">B 브랜치에 마이그레이션 디렉터리가 없습니다.</span>
+                        <span th:if="${result.a.dirMissing}"><span class="bn bn-a" th:text="${result.a.name}">A</span> 브랜치에 마이그레이션 디렉터리가 없습니다. </span>
+                        <span th:if="${result.b.dirMissing}"><span class="bn bn-b" th:text="${result.b.name}">B</span> 브랜치에 마이그레이션 디렉터리가 없습니다.</span>
                     </div>
                 </div>
 
@@ -125,16 +125,16 @@
                     </div>
                     <div th:each="d : ${f.duplicatesInA}" class="notice notice-danger m-3 mb-0">
                         <svg th:replace="~{fragments/layout :: icon('alert')}"></svg>
-                        <div>A 브랜치 안에서 버전 중복: <span class="mono" th:text="${d}"></span> — Flyway 실행 시 오류 발생</div>
+                        <div><span class="bn bn-a" th:text="${result.a.name}">A</span> 브랜치 안에서 버전 중복: <span class="mono" th:text="${d}"></span> — Flyway 실행 시 오류 발생</div>
                     </div>
                     <div th:each="d : ${f.duplicatesInB}" class="notice notice-danger m-3 mb-0">
                         <svg th:replace="~{fragments/layout :: icon('alert')}"></svg>
-                        <div>B 브랜치 안에서 버전 중복: <span class="mono" th:text="${d}"></span> — Flyway 실행 시 오류 발생</div>
+                        <div><span class="bn bn-b" th:text="${result.b.name}">B</span> 브랜치 안에서 버전 중복: <span class="mono" th:text="${d}"></span> — Flyway 실행 시 오류 발생</div>
                     </div>
                     <div th:if="${f.conflicts.isEmpty()}" class="empty">없음</div>
                     <div th:unless="${f.conflicts.isEmpty()}" class="table-wrap">
                         <table class="br-table">
-                            <thead><tr><th>버전</th><th>A 파일</th><th>B 파일</th><th>판정</th><th>Flyway checksum (참고)</th></tr></thead>
+                            <thead><tr><th>버전</th><th><span class="bn bn-a" th:text="${result.a.name}">A</span> 파일</th><th><span class="bn bn-b" th:text="${result.b.name}">B</span> 파일</th><th>판정</th><th>Flyway checksum (참고)</th></tr></thead>
                             <tbody>
                             <tr th:each="x : ${f.conflicts}">
                                 <td class="mono" th:text="${x.version}"></td>
@@ -150,7 +150,7 @@
                                 </td>
                                 <td class="small text-danger-br" th:text="${x.reason}"></td>
                                 <td class="small">
-                                    <div th:if="${x.checksumA != null}" class="mono" th:text="'A ' + ${x.checksumA} + ' / B ' + ${x.checksumB}"></div>
+                                    <div th:if="${x.checksumA != null}" class="mono" th:text="${result.a.name} + ' ' + ${x.checksumA} + ' / ' + ${result.b.name} + ' ' + ${x.checksumB}"></div>
                                     <div class="text-muted-2" th:text="${x.checksumNote}"></div>
                                 </td>
                             </tr>
@@ -162,9 +162,9 @@
                 <!-- A 에만 -->
                 <section class="panel">
                     <div class="panel-head">
-                        <span class="dot" style="--st-c: var(--br-warn)"></span> B 에 없는 Flyway
+                        <span class="dot" style="--st-c: var(--br-warn)"></span> <span class="bn bn-b" th:text="${result.b.name}">B</span> 에 없는 Flyway
                         <span class="count" th:text="${f.onlyInA.size()}"></span>
-                        <span class="hint">A 에만 있음</span>
+                        <span class="hint"><span class="bn bn-a" th:text="${result.a.name}">A</span> 에만 있음</span>
                     </div>
                     <div th:if="${f.onlyInA.isEmpty()}" class="empty">없음</div>
                     <div th:replace="~{::migrationTable(${f.onlyInA}, ${result.a.commitSha})}"></div>
@@ -173,7 +173,7 @@
                 <!-- B 에만 -->
                 <section class="panel">
                     <div class="panel-head">
-                        <span class="dot" style="--st-c: var(--br-neutral)"></span> B 에만 있는 Flyway
+                        <span class="dot" style="--st-c: var(--br-neutral)"></span> <span class="bn bn-b" th:text="${result.b.name}">B</span> 에만 있는 Flyway
                         <span class="count" th:text="${f.onlyInB.size()}"></span>
                     </div>
                     <div th:if="${f.onlyInB.isEmpty()}" class="empty">없음</div>
@@ -202,7 +202,7 @@
                     <div th:if="${f.repeatableDiffs.isEmpty()}" class="empty">없음</div>
                     <div th:unless="${f.repeatableDiffs.isEmpty()}" class="table-wrap">
                         <table class="br-table">
-                            <thead><tr><th>파일</th><th>차이</th><th>A</th><th>B</th></tr></thead>
+                            <thead><tr><th>파일</th><th>차이</th><th><span class="bn bn-a" th:text="${result.a.name}">A</span></th><th><span class="bn bn-b" th:text="${result.b.name}">B</span></th></tr></thead>
                             <tbody>
                             <tr th:each="r : ${f.repeatableDiffs}">
                                 <td class="mono" th:text="${r.fileName}"></td>
@@ -219,7 +219,7 @@
             </div>
 
             <!-- ------------------------------ 커밋 -->
-            <div class="tab-pane fade" id="tabCommits" role="tabpanel">
+            <div class="tab-pane fade show active" id="tabCommits" role="tabpanel">
                 <div th:if="${c.error}" class="notice notice-danger">
                     <svg th:replace="~{fragments/layout :: icon('alert')}"></svg><div th:text="'커밋 비교 실패: ' + ${c.error}"></div>
                 </div>
@@ -245,10 +245,10 @@
                     </select>
                 </div>
 
-                <!-- A 에만 있는 커밋: cherry-pick 흔적 없음(우선 확인) / 있음(접힘) -->
+                <!-- 실제 누락 가능성이 높은 것 먼저: 양쪽의 "cherry-pick 흔적 없음" -->
                 <section class="panel">
                     <div class="panel-head">
-                        <span class="dot" style="--st-c: var(--br-warn)"></span> A 에 있고 B 에 없는 커밋 — cherry-pick 흔적 없음
+                        <span class="dot" style="--st-c: var(--br-warn)"></span> <span class="bn bn-a" th:text="${result.a.name}">A</span> 에 있고 <span class="bn bn-b" th:text="${result.b.name}">B</span> 에 없는 커밋
                         <span class="count" th:text="${c.aNotBNoPick().size()}"></span>
                         <span class="hint">실제 누락 가능성이 높음 · 우선 확인</span>
                     </div>
@@ -256,29 +256,31 @@
                 </section>
 
                 <section class="panel">
-                    <details>
-                        <summary class="panel-head" style="cursor: pointer; border-bottom: 0">
-                            <span class="dot" style="--st-c: var(--br-neutral)"></span> A 에 있고 B 에 없는 커밋 — cherry-pick 가능성 있음
-                            <span class="count" th:text="${c.aNotBMaybePicked().size()}"></span>
-                            <span class="hint">-x 기록 또는 제목·작성자 일치 · 이미 반영되었을 수 있음 · 클릭해서 펼치기</span>
-                        </summary>
-                        <div style="border-top: 1px solid var(--br-border)" th:replace="~{::commitTable(${c.aNotBMaybePicked()}, true)}"></div>
-                    </details>
-                </section>
-
-                <!-- B 에만 있는 커밋 -->
-                <section class="panel">
                     <div class="panel-head">
-                        <span class="dot" style="--st-c: var(--br-neutral)"></span> B 에 있고 A 에 없는 커밋 — cherry-pick 흔적 없음
+                        <span class="dot" style="--st-c: var(--br-neutral)"></span> <span class="bn bn-b" th:text="${result.b.name}">B</span> 에 있고 <span class="bn bn-a" th:text="${result.a.name}">A</span> 에 없는 커밋
                         <span class="count" th:text="${c.bNotANoPick().size()}"></span>
                     </div>
                     <div th:replace="~{::commitTable(${c.bNotANoPick()}, false)}"></div>
                 </section>
 
-                <section class="panel">
+                <!-- 볼 일이 거의 없는 것은 맨 아래에 흐리게: "cherry-pick 가능성 있음" (이미 반영되었을 수 있음) -->
+                <div class="dim-divider">cherry-pick 가능성 있음 · 이미 반영되었을 수 있어 참고용</div>
+
+                <section class="panel panel-dim">
                     <details>
                         <summary class="panel-head" style="cursor: pointer; border-bottom: 0">
-                            <span class="dot" style="--st-c: var(--br-neutral)"></span> B 에 있고 A 에 없는 커밋 — cherry-pick 가능성 있음
+                            <span class="dot" style="--st-c: var(--br-neutral)"></span> <span class="bn bn-a" th:text="${result.a.name}">A</span> 에 있고 <span class="bn bn-b" th:text="${result.b.name}">B</span> 에 없는 커밋 — cherry-pick 가능성 있음
+                            <span class="count" th:text="${c.aNotBMaybePicked().size()}"></span>
+                            <span class="hint">-x 기록 또는 제목·작성자 일치 · 클릭해서 펼치기</span>
+                        </summary>
+                        <div style="border-top: 1px solid var(--br-border)" th:replace="~{::commitTable(${c.aNotBMaybePicked()}, true)}"></div>
+                    </details>
+                </section>
+
+                <section class="panel panel-dim">
+                    <details>
+                        <summary class="panel-head" style="cursor: pointer; border-bottom: 0">
+                            <span class="dot" style="--st-c: var(--br-neutral)"></span> <span class="bn bn-b" th:text="${result.b.name}">B</span> 에 있고 <span class="bn bn-a" th:text="${result.a.name}">A</span> 에 없는 커밋 — cherry-pick 가능성 있음
                             <span class="count" th:text="${c.bNotAMaybePicked().size()}"></span>
                             <span class="hint">클릭해서 펼치기</span>
                         </summary>
@@ -323,7 +325,7 @@
                         <div th:if="${cm.hint}" class="sub" th:text="${cm.hint}"></div>
                     </td>
                     <td class="text-nowrap text-muted-2" th:text="${cm.author}"></td>
-                    <td class="text-nowrap text-muted-2 mono" th:text="${cm.date != null ? #temporals.format(cm.date, 'yyyy-MM-dd HH:mm') : ''}"></td>
+                    <td class="text-nowrap text-muted-2 mono" th:text="${cm.date != null ? #temporals.format(cm.date.atZoneSameInstant(zone), 'yyyy-MM-dd HH:mm') : ''}"></td>
                     <td class="text-nowrap">
                         <span th:unless="${picked}" class="st st-warn"><span class="dot"></span>이력상 누락 후보</span>
                         <span th:if="${picked}" class="st st-neutral"><span class="dot"></span>cherry-pick 가능성</span>
