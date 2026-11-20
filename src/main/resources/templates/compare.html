@@ -29,6 +29,7 @@
             <div>
                 <label for="branchA" class="field-label d-block mb-1">기준 브랜치 A</label>
                 <select id="branchA" name="a" class="form-select" data-searchable>
+                    <option value="" th:selected="${a == ''}">— 선택 —</option>
                     <option th:each="n : ${branchNames}" th:value="${n}" th:text="${n}" th:selected="${n == a}"></option>
                 </select>
             </div>
